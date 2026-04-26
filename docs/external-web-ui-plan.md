@@ -5,6 +5,53 @@
 
 # External Web UI 実装プラン
 
+> ## 0. レビュー反映メモ（2026-04-26 追記）
+>
+> このプランを `kobayashi-shuto-0105/meetily-live-viewer` の `develop` ブランチの実コードと突き合わせてレビューした結果、進行可能（feasible）と判断した上で、以下の小さな不一致・抜けを補足する。本文（1章以降）は元プランをそのまま残し、本セクションを「優先される修正点」として参照すること。
+>
+> ### 0.1 `TranscriptUpdate` のフィールド型は `f64`
+>
+> 実コード `frontend/src-tauri/src/audio/transcription/worker.rs` の `TranscriptUpdate` では、`chunk_start_time` / `audio_start_time` / `audio_end_time` / `duration` は `f32` ではなく **`f64`**。本文 3章のフィールド一覧、および 8.5 章の `TranscriptSegmentPayload` の同名フィールドはすべて `f64` として実装する。マイグレーションの `REAL` カラムは SQLite 側ではどちらでも問題ないが、Rust 構造体は `f64` で揃えること。
+>
+> ### 0.2 `external_web/server.rs` のトークン検証は実装が必要
+>
+> 8.6 章のサンプルでは `ServerState.token` を保持するだけで実際の検証はしていない。少なくとも以下を実装する前提で進めること。
+>
+> - REST: クエリ `?token=...` または `Authorization: Bearer ...` を `axum` の middleware (`axum::middleware::from_fn_with_state` など) でチェックし、不一致なら 401 を返す。
+> - WebSocket: `WebSocketUpgrade` ハンドラの中で `Query<HashMap<String, String>>` を取り出して token を検証し、不一致なら upgrade 前に 401 を返す。
+> - 既定 bind は `127.0.0.1:38391` のままとし、`MEETILY_EXT_BIND` で `0.0.0.0` にする場合は token 必須を強制する（空 token を弾く）。
+>
+> ### 0.3 DB pool は `AppState` から取得する
+>
+> `external_web::service::*` および `external_web::repository::*` から SQLite pool にアクセスする際は、`app.state::<crate::state::AppState>()` 経由で `state.db_manager.pool()` を使う（`api/api.rs` の既存パターンと同じ）。`ExternalWebState` には pool を直接持たせない。
+>
+> ### 0.4 `api.rs::api_save_transcript` の `_app` 引数の扱い
+>
+> 現状 `api_save_transcript<R: Runtime>(_app: AppHandle<R>, ...)` のように引数名がアンダースコア接頭辞で「未使用」扱いになっている。10.3 章の `finalize_external_session(_app.clone(), ...)` を呼ぶには、
+>
+> - 引数名を `app` にリネームする
+> - `finalize_external_session` 側を `<R: Runtime>` でジェネリックに受けるか、`AppHandle` (default Wry) に絞る
+>
+> のいずれかで対応する。プランの疑似コードはこのリネーム前提で読むこと。
+>
+> ### 0.5 `recording_commands.rs` には listener が複数ある
+>
+> 9 章で言及されている `transcript-update` の listener は、現状 `recording_commands.rs` の中に **2 箇所**（おおよそ L262 / L430）登場する。`handle_transcript_update` 呼び出しは両方に同じパターンで追加する必要がある。共通ヘルパー関数（例: `fn forward_to_external(app: &AppHandle, update: TranscriptUpdate)`）に切り出してから呼ぶのが望ましい。
+>
+> ### 0.6 `external_transcript_segments` の upsert 戦略
+>
+> `is_partial = true` の途中結果は同一 `(session_id, sequence_id)` で上書きされる前提。マイグレーションの UNIQUE 制約に合わせ、INSERT は `INSERT INTO external_transcript_segments (...) VALUES (...) ON CONFLICT(session_id, sequence_id) DO UPDATE SET raw_text = excluded.raw_text, is_partial = excluded.is_partial, ..., updated_at = excluded.updated_at` の形にすること。
+>
+> ### 0.7 既存の依存
+>
+> `frontend/src-tauri/Cargo.toml` には既に `tokio` (full)、`sqlx` (sqlite, runtime-tokio)、`uuid`、`serde`、`serde_json`、`anyhow`、`futures-util` が入っている。8.1 章で追加するのは実質 **`axum` と `tower-http` のみ**。重複追加に注意。
+>
+> ### 0.8 結論
+>
+> 上記 0.1〜0.7 を踏まえれば、本プランの方針（生データ `transcripts` を変更せず、`external_*` テーブルを overlay として持ち、Rust 側に WS/REST サーバーを生やす）はそのまま実装に進められる。実装は本文 20 章の優先順位どおり、**Step 1 (DB migration) → Step 3 (`external_web` module) → Step 4 (`recording_commands` 接続) → Step 6 (`ext-frontend`)** の順で進める。
+
+---
+
 ## 1. 目的
 
 Meetily本体のリアルタイム文字起こし結果を、外部ブラウザから閲覧できる **External Web UI** として公開する。
