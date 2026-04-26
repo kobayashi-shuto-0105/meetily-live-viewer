@@ -1,50 +1,71 @@
-version: 2
+version: 2  # Dependabot 設定ファイルのバージョン（現在は 2 固定）
 
+# ────────────────────────────────────────────────────────────
+# Dependabot とは？
+#
+# GitHub が提供する依存ライブラリ自動更新ボット。
+# 指定したスケジュールで各パッケージマネージャの依存を確認し、
+# 古くなっていたら自動で更新 PR を作ってくれる。
+# 脆弱性のある古いパッケージを放置しないための仕組み。
+# ────────────────────────────────────────────────────────────
 updates:
-  # ─────────────────────────────────────────
-  # GitHub Actions
-  # ─────────────────────────────────────────
-  - package-ecosystem: "github-actions"
-    directory: "/"
-    schedule:
-      interval: "weekly"
-    labels:
-      - "dependencies"
 
-  # ─────────────────────────────────────────
-  # npm (frontend)
-  # ─────────────────────────────────────────
+  # ──────────────────────────────────────────────
+  # GitHub Actions 自体のバージョン更新
+  #
+  # .github/workflows/*.yml 内の
+  #   uses: actions/checkout@v4
+  # のような Actions のバージョンを更新してくれる。
+  # ──────────────────────────────────────────────
+  - package-ecosystem: "github-actions"
+    directory: "/"          # ルートの .github/workflows/ を見る
+    schedule:
+      interval: "weekly"    # 毎週月曜に確認（daily/monthly も選べる）
+    labels:
+      - "dependencies"      # PR に自動で付くラベル
+
+  # ──────────────────────────────────────────────
+  # npm パッケージ (Next.js / React / Tauri JS SDK など)
+  #
+  # frontend/package.json の依存を更新してくれる。
+  # ──────────────────────────────────────────────
   - package-ecosystem: "npm"
-    directory: "/frontend"
+    directory: "/frontend"  # package.json がある場所
     schedule:
       interval: "weekly"
     labels:
       - "dependencies"
       - "frontend"
+    # groups: 関連パッケージをまとめて1つの PR にする設定。
+    # バラバラに PR が来るとレビューが大変なので関連するものをグループ化。
     groups:
       tauri:
         patterns:
-          - "@tauri-apps/*"
+          - "@tauri-apps/*"  # @tauri-apps/api, @tauri-apps/plugin-* をまとめる
       radix-ui:
         patterns:
-          - "@radix-ui/*"
+          - "@radix-ui/*"    # UI コンポーネント群をまとめる
 
-  # ─────────────────────────────────────────
-  # Cargo (Rust / Tauri)
-  # ─────────────────────────────────────────
+  # ──────────────────────────────────────────────
+  # Cargo クレート (Rust / Tauri バックエンド)
+  #
+  # frontend/src-tauri/Cargo.toml の依存を更新してくれる。
+  # ──────────────────────────────────────────────
   - package-ecosystem: "cargo"
-    directory: "/frontend/src-tauri"
+    directory: "/frontend/src-tauri"  # Cargo.toml がある場所
     schedule:
       interval: "weekly"
     labels:
       - "dependencies"
       - "rust"
 
-  # ─────────────────────────────────────────
-  # pip (Python backend)
-  # ─────────────────────────────────────────
+  # ──────────────────────────────────────────────
+  # pip パッケージ (Python / FastAPI バックエンド)
+  #
+  # backend/requirements.txt の依存を更新してくれる。
+  # ──────────────────────────────────────────────
   - package-ecosystem: "pip"
-    directory: "/backend"
+    directory: "/backend"   # requirements.txt がある場所
     schedule:
       interval: "weekly"
     labels:
