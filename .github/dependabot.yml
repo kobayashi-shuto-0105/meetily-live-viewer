@@ -1,0 +1,52 @@
+version: 2
+
+updates:
+  # ─────────────────────────────────────────
+  # GitHub Actions
+  # ─────────────────────────────────────────
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "dependencies"
+
+  # ─────────────────────────────────────────
+  # npm (frontend)
+  # ─────────────────────────────────────────
+  - package-ecosystem: "npm"
+    directory: "/frontend"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "dependencies"
+      - "frontend"
+    groups:
+      tauri:
+        patterns:
+          - "@tauri-apps/*"
+      radix-ui:
+        patterns:
+          - "@radix-ui/*"
+
+  # ─────────────────────────────────────────
+  # Cargo (Rust / Tauri)
+  # ─────────────────────────────────────────
+  - package-ecosystem: "cargo"
+    directory: "/frontend/src-tauri"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "dependencies"
+      - "rust"
+
+  # ─────────────────────────────────────────
+  # pip (Python backend)
+  # ─────────────────────────────────────────
+  - package-ecosystem: "pip"
+    directory: "/backend"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "dependencies"
+      - "backend"
