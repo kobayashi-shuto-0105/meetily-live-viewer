@@ -10,7 +10,7 @@
 //   - トランザクションを使い、revision の is_active 切替は原子的に行う
 // =============================================================================
 
-use sqlx::{Connection, Error as SqlxError, SqlitePool};
+use sqlx::{Error as SqlxError, SqlitePool};
 use tracing::{error, info};
 use uuid::Uuid;
 
@@ -219,7 +219,7 @@ impl ExternalWebRepository {
         .execute(pool)
         .await?;
 
-        // upsert 後の実際の行を返す（ON CONFLICT 時は id が異なるため再取得）
+        // upsert 後の実際の行を返す（ON CONFLICT 時は既存行の id が保持されるため再取得する）
         let segment = sqlx::query_as::<_, ExternalTranscriptSegment>(
             "SELECT id, session_id, meeting_id, source_transcript_id, sequence_id, raw_text, timestamp, source, is_partial, confidence, audio_start_time, audio_end_time, duration, created_at, updated_at
              FROM external_transcript_segments
@@ -286,8 +286,7 @@ impl ExternalWebRepository {
         let id = format!("ext-rev-{}", Uuid::new_v4());
         let now = chrono::Utc::now().to_rfc3339();
 
-        let mut conn = pool.acquire().await?;
-        let mut tx = conn.begin().await?;
+        let mut tx = pool.begin().await?;
 
         // 1. 既存の active revision を deactivate（同一セグメント内で 1 つだけ active にする）
         sqlx::query(
