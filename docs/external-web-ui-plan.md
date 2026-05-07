@@ -1,9 +1,62 @@
-以下をそのまま `docs/external-web-ui-plan.md` に入れる想定で書きます。
-表記はリポジトリ名に合わせて **Meetily** に寄せています。📝
+# External Web UI 実装プラン
+
+> ## 0. レビュー反映メモ（2026-04-26 追記）
+>
+> このプランを `kobayashi-shuto-0105/meetily-live-viewer` の `develop` ブランチの実コードと突き合わせてレビューした結果、進行可能（feasible）と判断した上で、以下の小さな不一致・抜けを補足する。本文（1章以降）は元プランをそのまま残し、本セクションを「優先される修正点」として参照すること。
+>
+> ### 0.1 `TranscriptUpdate` のフィールド型は `f64`
+>
+> 実コード `frontend/src-tauri/src/audio/transcription/worker.rs` の `TranscriptUpdate` では、`chunk_start_time` / `audio_start_time` / `audio_end_time` / `duration` は `f32` ではなく **`f64`**。本文 3章のフィールド一覧、および 8.5 章の `TranscriptSegmentPayload` の同名フィールドはすべて `f64` として実装する。マイグレーションの `REAL` カラムは SQLite 側ではどちらでも問題ないが、Rust 構造体は `f64` で揃えること。
+>
+> ### 0.2 `external_web/server.rs` のトークン検証は実装が必要
+>
+> 8.6 章のサンプルでは `ServerState.token` を保持するだけで実際の検証はしていない。少なくとも以下を実装する前提で進めること。
+>
+> - REST: クエリ `?token=...` または `Authorization: Bearer ...` を `axum` の middleware (`axum::middleware::from_fn_with_state` など) でチェックし、不一致なら 401 を返す。
+> - WebSocket: `WebSocketUpgrade` ハンドラの中で `Query<HashMap<String, String>>` を取り出して token を検証し、不一致なら upgrade 前に 401 を返す。
+> - 既定 bind は `127.0.0.1:38391` のままとし、`MEETILY_EXT_BIND` で `0.0.0.0` にする場合は token 必須を強制する（空 token を弾く）。
+>
+> ### 0.3 DB pool は `AppState` から取得する
+>
+> `external_web::service::*` および `external_web::repository::*` から SQLite pool にアクセスする際は、`app.state::<crate::state::AppState>()` 経由で `state.db_manager.pool()` を使う（`api/api.rs` の既存パターンと同じ）。`ExternalWebState` には pool を直接持たせない。
+>
+> ### 0.4 `api.rs::api_save_transcript` の `_app` 引数の扱い
+>
+> 現状 `api_save_transcript<R: Runtime>(_app: AppHandle<R>, ...)` のように引数名がアンダースコア接頭辞で「未使用」扱いになっている。10.3 章の `finalize_external_session(app.clone(), ...)` を呼ぶには、
+>
+> - 引数名を `app` にリネームする
+> - `finalize_external_session` 側を `<R: Runtime>` でジェネリックに受けるか、`AppHandle` (default Wry) に絞る
+>
+> のいずれかで対応する。プランの疑似コードはこのリネーム前提で読むこと。
+>
+> ### 0.5 `recording_commands.rs` には listener が複数ある
+>
+> 9 章で言及されている `transcript-update` の listener は、現状 `recording_commands.rs` の中に **2 箇所**（おおよそ L262 / L430）登場する。`handle_transcript_update` 呼び出しは両方に同じパターンで追加する必要がある。共通ヘルパー関数（例: `fn forward_to_external(app: &AppHandle, update: TranscriptUpdate)`）に切り出してから呼ぶのが望ましい。
+>
+> ### 0.6 `external_transcript_segments` の upsert 戦略
+>
+> `is_partial = true` の途中結果は同一 `(session_id, sequence_id)` で上書きされる前提。マイグレーションの UNIQUE 制約に合わせ、INSERT は `INSERT INTO external_transcript_segments (...) VALUES (...) ON CONFLICT(session_id, sequence_id) DO UPDATE SET raw_text = excluded.raw_text, is_partial = excluded.is_partial, ..., updated_at = excluded.updated_at` の形にすること。
+>
+> ### 0.7 既存の依存
+>
+> `frontend/src-tauri/Cargo.toml` には既に `tokio` (full)、`sqlx` (sqlite, runtime-tokio)、`uuid`、`serde`、`serde_json`、`anyhow`、`futures-util` が入っている。8.1 章で追加するのは実質 **`axum` と `tower-http` のみ**。重複追加に注意。
+>
+> ### 0.8 初回起動（First Launch）時の `AppState` 未初期化を考慮する
+>
+> `lib.rs` の setup では `database::setup::initialize_database_on_startup` が呼ばれるが、初回起動では DB 未作成のため `AppState` がまだ `manage` されない分岐がある。したがって `external_web::server::run` 内で `app.state::<AppState>()` を前提にすると panic しうる。
+>
+> 対応方針は以下のいずれかにする。
+>
+> - `run` の起動前に `app.try_state::<AppState>()` を確認し、未初期化なら起動をスキップ（またはリトライ）
+> - DB初期化完了イベント（`initialize_fresh_database` / `import_and_initialize_database` 後）で外部サーバーを起動する
+>
+> これを先に決めておかないと、初回起動ユーザー環境で外部サーバー機能が不安定になる。
+>
+> ### 0.9 結論
+>
+> 上記 0.1〜0.8 を踏まえれば、本プランの方針（生データ `transcripts` を変更せず、`external_*` テーブルを overlay として持ち、Rust 側に WS/REST サーバーを生やす）はそのまま実装に進められる。実装は本文 20 章の優先順位どおり、**Step 1 (DB migration) → Step 3 (`external_web` module) → Step 4 (`recording_commands` 接続) → Step 6 (`ext-frontend`)** の順で進める。
 
 ---
-
-# External Web UI 実装プラン
 
 ## 1. 目的
 
@@ -57,12 +110,12 @@ pub struct TranscriptUpdate {
     pub timestamp: String,
     pub source: String,
     pub sequence_id: u64,
-    pub chunk_start_time: f32,
+    pub chunk_start_time: f64,
     pub is_partial: bool,
     pub confidence: f32,
-    pub audio_start_time: f32,
-    pub audio_end_time: f32,
-    pub duration: f32,
+    pub audio_start_time: f64,
+    pub audio_end_time: f64,
+    pub duration: f64,
 }
 ```
 
@@ -408,6 +461,18 @@ Tauri setup内で外部Webサーバーを起動する。
 実際には既存の `.setup(...)` の中に追加する。
 DB初期化より前に起動するとDB poolが使えない可能性があるため、**既存DB初期化が完了した後**にspawnする。
 
+さらに、First Launch（DB未作成）分岐では `AppState` が未初期化の可能性があるため、起動時は以下のどちらかで防御する。
+
+```rust
+if app_handle.try_state::<crate::state::AppState>().is_some() {
+    tauri::async_runtime::spawn(async move {
+        let _ = crate::external_web::server::run(app_handle).await;
+    });
+}
+```
+
+または、DB初期化コマンド成功後にサーバー起動へ切り替える。
+
 ---
 
 ## 8.4 WebSocket state
@@ -520,9 +585,9 @@ pub struct TranscriptSegmentPayload {
     pub source: String,
     pub is_partial: bool,
     pub confidence: f32,
-    pub audio_start_time: f32,
-    pub audio_end_time: f32,
-    pub duration: f32,
+    pub audio_start_time: f64,
+    pub audio_end_time: f64,
+    pub duration: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -832,7 +897,7 @@ frontend/src-tauri/src/api/api.rs
 
 ```rust
 if let Err(error) = crate::external_web::service::finalize_external_session(
-    _app.clone(),
+    app.clone(),
     meeting_id.clone(),
 ).await {
     log::error!("Failed to finalize external session: {}", error);
@@ -1557,13 +1622,13 @@ ext-frontend/
 この方針なら、**Meetilyの既存文字起こし保存処理を壊さずに、外部Web UI側で編集・コメント・ハイライトを独立管理**できます。
 特に重要なのは、`transcripts` を直接更新せず、`external_*` テーブルを「UI用の上書きレイヤー」として扱う点です。
 
-[1]: https://github.com/Zackriya-Solutions/meetily/blob/main/docs/architecture.md "meetily/docs/architecture.md at main · Zackriya-Solutions/meetily · GitHub"
-[2]: https://github.com/Zackriya-Solutions/meetily "GitHub - Zackriya-Solutions/meetily: Privacy first, AI meeting assistant with 4x faster Parakeet/Whisper live transcription, speaker diarization, and Ollama summarization built on Rust. 100% local processing. no cloud required. Meetily (Meetly Ai - https://meetily.ai) is the #1 Self-hosted,  Open-source Ai meeting note taker for macOS & Windows. · GitHub"
-[3]: https://github.com/Zackriya-Solutions/meetily/blob/main/frontend/src-tauri/src/audio/transcription/worker.rs "meetily/frontend/src-tauri/src/audio/transcription/worker.rs at main · Zackriya-Solutions/meetily · GitHub"
-[4]: https://github.com/Zackriya-Solutions/meetily/blob/main/frontend/src-tauri/src/audio/recording_commands.rs "meetily/frontend/src-tauri/src/audio/recording_commands.rs at main · Zackriya-Solutions/meetily · GitHub"
-[5]: https://github.com/Zackriya-Solutions/meetily/blob/main/frontend/src-tauri/src/database/models.rs "meetily/frontend/src-tauri/src/database/models.rs at main · Zackriya-Solutions/meetily · GitHub"
-[6]: https://github.com/Zackriya-Solutions/meetily/blob/main/frontend/src-tauri/migrations/20250916100000_initial_schema.sql "meetily/frontend/src-tauri/migrations/20250916100000_initial_schema.sql at main · Zackriya-Solutions/meetily · GitHub"
-[7]: https://github.com/Zackriya-Solutions/meetily/blob/main/frontend/src-tauri/migrations/20251110000001_add_speaker_field.sql "meetily/frontend/src-tauri/migrations/20251110000001_add_speaker_field.sql at main · Zackriya-Solutions/meetily · GitHub"
-[8]: https://github.com/Zackriya-Solutions/meetily/blob/main/frontend/src-tauri/src/database/repositories/transcript.rs "meetily/frontend/src-tauri/src/database/repositories/transcript.rs at main · Zackriya-Solutions/meetily · GitHub"
-[9]: https://github.com/Zackriya-Solutions/meetily/blob/main/frontend/src-tauri/src/api/api.rs "meetily/frontend/src-tauri/src/api/api.rs at main · Zackriya-Solutions/meetily · GitHub"
-[10]: https://github.com/Zackriya-Solutions/meetily/blob/main/frontend/src-tauri/migrations/20251223000000_add_meeting_notes.sql "meetily/frontend/src-tauri/migrations/20251223000000_add_meeting_notes.sql at main · Zackriya-Solutions/meetily · GitHub"
+[1]: https://github.com/kobayashi-shuto-0105/meetily-live-viewer/blob/develop/docs/architecture.md "meetily-live-viewer/docs/architecture.md at develop · kobayashi-shuto-0105/meetily-live-viewer · GitHub"
+[2]: https://github.com/kobayashi-shuto-0105/meetily-live-viewer/tree/develop "kobayashi-shuto-0105/meetily-live-viewer at develop · GitHub"
+[3]: https://github.com/kobayashi-shuto-0105/meetily-live-viewer/blob/develop/frontend/src-tauri/src/audio/transcription/worker.rs "meetily-live-viewer/frontend/src-tauri/src/audio/transcription/worker.rs at develop · GitHub"
+[4]: https://github.com/kobayashi-shuto-0105/meetily-live-viewer/blob/develop/frontend/src-tauri/src/audio/recording_commands.rs "meetily-live-viewer/frontend/src-tauri/src/audio/recording_commands.rs at develop · GitHub"
+[5]: https://github.com/kobayashi-shuto-0105/meetily-live-viewer/blob/develop/frontend/src-tauri/src/database/models.rs "meetily-live-viewer/frontend/src-tauri/src/database/models.rs at develop · GitHub"
+[6]: https://github.com/kobayashi-shuto-0105/meetily-live-viewer/blob/develop/frontend/src-tauri/migrations/20250916100000_initial_schema.sql "meetily-live-viewer/frontend/src-tauri/migrations/20250916100000_initial_schema.sql at develop · GitHub"
+[7]: https://github.com/kobayashi-shuto-0105/meetily-live-viewer/blob/develop/frontend/src-tauri/migrations/20251110000001_add_speaker_field.sql "meetily-live-viewer/frontend/src-tauri/migrations/20251110000001_add_speaker_field.sql at develop · GitHub"
+[8]: https://github.com/kobayashi-shuto-0105/meetily-live-viewer/blob/develop/frontend/src-tauri/src/database/repositories/transcript.rs "meetily-live-viewer/frontend/src-tauri/src/database/repositories/transcript.rs at develop · GitHub"
+[9]: https://github.com/kobayashi-shuto-0105/meetily-live-viewer/blob/develop/frontend/src-tauri/src/api/api.rs "meetily-live-viewer/frontend/src-tauri/src/api/api.rs at develop · GitHub"
+[10]: https://github.com/kobayashi-shuto-0105/meetily-live-viewer/blob/develop/frontend/src-tauri/migrations/20251223000000_add_meeting_notes.sql "meetily-live-viewer/frontend/src-tauri/migrations/20251223000000_add_meeting_notes.sql at develop · GitHub"
