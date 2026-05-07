@@ -338,10 +338,12 @@ CREATE TABLE IF NOT EXISTS external_transcript_comments (
     author_name TEXT,
     anchor_start INTEGER,
     anchor_end INTEGER,
+    anchor_revision_id TEXT,
     resolved_at TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
-    FOREIGN KEY (external_segment_id) REFERENCES external_transcript_segments(id) ON DELETE CASCADE
+    FOREIGN KEY (external_segment_id) REFERENCES external_transcript_segments(id) ON DELETE CASCADE,
+    FOREIGN KEY (anchor_revision_id) REFERENCES external_transcript_revisions(id) ON DELETE SET NULL
 );
 
 CREATE TABLE IF NOT EXISTS external_transcript_highlights (
@@ -351,9 +353,11 @@ CREATE TABLE IF NOT EXISTS external_transcript_highlights (
     note TEXT,
     anchor_start INTEGER,
     anchor_end INTEGER,
+    anchor_revision_id TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
-    FOREIGN KEY (external_segment_id) REFERENCES external_transcript_segments(id) ON DELETE CASCADE
+    FOREIGN KEY (external_segment_id) REFERENCES external_transcript_segments(id) ON DELETE CASCADE,
+    FOREIGN KEY (anchor_revision_id) REFERENCES external_transcript_revisions(id) ON DELETE SET NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_external_sessions_meeting_id
@@ -370,6 +374,10 @@ CREATE INDEX IF NOT EXISTS idx_external_segments_source_transcript_id
 
 CREATE INDEX IF NOT EXISTS idx_external_revisions_segment_id
     ON external_transcript_revisions(external_segment_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_external_revisions_one_active_per_segment
+    ON external_transcript_revisions(external_segment_id)
+    WHERE is_active = 1;
 
 CREATE INDEX IF NOT EXISTS idx_external_comments_segment_id
     ON external_transcript_comments(external_segment_id);
@@ -606,6 +614,7 @@ pub struct TranscriptCommentPayload {
     pub author_name: Option<String>,
     pub anchor_start: Option<i64>,
     pub anchor_end: Option<i64>,
+    pub anchor_revision_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -616,6 +625,7 @@ pub struct TranscriptHighlightPayload {
     pub note: Option<String>,
     pub anchor_start: Option<i64>,
     pub anchor_end: Option<i64>,
+    pub anchor_revision_id: Option<String>,
 }
 ```
 
@@ -1075,6 +1085,11 @@ Request:
 3. WebSocketで TranscriptRevisionCreated をbroadcast
 ```
 
+補足:
+
+- DB側で `is_active = 1` が同一セグメントに複数存在しないよう、partial unique index（`external_segment_id WHERE is_active = 1`）を張る。
+- `create_revision` は同一セグメントに対して並行実行されうるため、トランザクション内で更新→INSERTを行い、ユニーク制約違反が出た場合はリトライ/エラー処理を検討する。
+
 ---
 
 ## 12.3 コメント追加
@@ -1090,7 +1105,8 @@ Request:
   "commentText": "ここは後で確認する",
   "authorName": "shuto",
   "anchorStart": 3,
-  "anchorEnd": 12
+  "anchorEnd": 12,
+  "anchorRevisionId": "optional-revision-id"
 }
 ```
 
@@ -1100,6 +1116,11 @@ Request:
 1. external_transcript_comments にINSERT
 2. WebSocketで TranscriptCommentCreated をbroadcast
 ```
+
+補足:
+
+- `anchorRevisionId` が **NULL** の場合、`anchorStart/End` は `raw_text` を基準とする
+- `anchorRevisionId` が **NOT NULL** の場合、`anchorStart/End` はその revision の `edited_text` を基準とする（後から別revisionが作られても anchor がドリフトしない）
 
 ---
 
@@ -1116,7 +1137,8 @@ Request:
   "color": "yellow",
   "note": "重要",
   "anchorStart": 0,
-  "anchorEnd": 20
+  "anchorEnd": 20,
+  "anchorRevisionId": "optional-revision-id"
 }
 ```
 
@@ -1126,6 +1148,11 @@ Request:
 1. external_transcript_highlights にINSERT
 2. WebSocketで TranscriptHighlightCreated をbroadcast
 ```
+
+補足:
+
+- `anchorRevisionId` が **NULL** の場合、`anchorStart/End` は `raw_text` を基準とする
+- `anchorRevisionId` が **NOT NULL** の場合、`anchorStart/End` はその revision の `edited_text` を基準とする
 
 ---
 
