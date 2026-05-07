@@ -173,8 +173,14 @@ CREATE TABLE IF NOT EXISTS external_transcript_comments (
 
     -- セグメント本文（`raw_text` または現在 active な編集後テキスト）に対する
     -- 文字インデックス（半開区間 [start, end)）。NULL ならセグメント全体宛て。
+    --
+    -- `anchor_revision_id` が NULL の場合: `raw_text` を基準とする
+    -- `anchor_revision_id` が NOT NULL の場合: その revision の `edited_text` を基準とする
     anchor_start INTEGER,
     anchor_end INTEGER,
+
+    -- anchor の基準となった revision（raw_text 基準なら NULL）。
+    anchor_revision_id TEXT,
 
     -- 解決済みコメント（スレッド close）の時刻。NULL なら未解決。
     resolved_at TEXT,
@@ -182,7 +188,8 @@ CREATE TABLE IF NOT EXISTS external_transcript_comments (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
 
-    FOREIGN KEY (external_segment_id) REFERENCES external_transcript_segments(id) ON DELETE CASCADE
+    FOREIGN KEY (external_segment_id) REFERENCES external_transcript_segments(id) ON DELETE CASCADE,
+    FOREIGN KEY (anchor_revision_id) REFERENCES external_transcript_revisions(id) ON DELETE SET NULL
 );
 
 
@@ -205,13 +212,20 @@ CREATE TABLE IF NOT EXISTS external_transcript_highlights (
 
     -- ハイライトする文字範囲（半開区間 [start, end)）。
     -- NULL の場合はセグメント全体ハイライトとして扱う。
+    --
+    -- `anchor_revision_id` が NULL の場合: `raw_text` を基準とする
+    -- `anchor_revision_id` が NOT NULL の場合: その revision の `edited_text` を基準とする
     anchor_start INTEGER,
     anchor_end INTEGER,
+
+    -- anchor の基準となった revision（raw_text 基準なら NULL）。
+    anchor_revision_id TEXT,
 
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
 
-    FOREIGN KEY (external_segment_id) REFERENCES external_transcript_segments(id) ON DELETE CASCADE
+    FOREIGN KEY (external_segment_id) REFERENCES external_transcript_segments(id) ON DELETE CASCADE,
+    FOREIGN KEY (anchor_revision_id) REFERENCES external_transcript_revisions(id) ON DELETE SET NULL
 );
 
 
@@ -240,6 +254,12 @@ CREATE INDEX IF NOT EXISTS idx_external_segments_source_transcript_id
 -- セグメントに紐づく revisions / comments / highlights を引くため。
 CREATE INDEX IF NOT EXISTS idx_external_revisions_segment_id
     ON external_transcript_revisions(external_segment_id);
+
+-- 同一セグメント内の active revision は必ず 1 行だけにする。
+-- SQLite の partial unique index で担保する。
+CREATE UNIQUE INDEX IF NOT EXISTS idx_external_revisions_one_active_per_segment
+    ON external_transcript_revisions(external_segment_id)
+    WHERE is_active = 1;
 
 CREATE INDEX IF NOT EXISTS idx_external_comments_segment_id
     ON external_transcript_comments(external_segment_id);
