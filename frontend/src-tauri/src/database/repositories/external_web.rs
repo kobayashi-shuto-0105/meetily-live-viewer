@@ -11,7 +11,7 @@
 // =============================================================================
 
 use sqlx::{Error as SqlxError, SqlitePool};
-use tracing::{error, info};
+use tracing::info;
 use uuid::Uuid;
 
 use crate::database::models::{
@@ -89,6 +89,8 @@ impl ExternalWebRepository {
     ) -> Result<(), SqlxError> {
         let now = chrono::Utc::now().to_rfc3339();
 
+        let mut tx = pool.begin().await?;
+
         // セッションに meeting_id と finalized_at をセット
         sqlx::query(
             "UPDATE external_recording_sessions
@@ -99,7 +101,7 @@ impl ExternalWebRepository {
         .bind(&now)
         .bind(&now)
         .bind(session_id)
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
 
         // 同セッションに属する全 segments にも meeting_id を伝播
@@ -111,8 +113,10 @@ impl ExternalWebRepository {
         .bind(meeting_id)
         .bind(&now)
         .bind(session_id)
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
+
+        tx.commit().await?;
 
         info!(
             "Finalized external session {} → meeting {}",
@@ -167,7 +171,7 @@ impl ExternalWebRepository {
     /// - `session_id`: 所属する録音セッション ID
     /// - `sequence_id`: TranscriptUpdate.sequence_id（単調増加）
     /// - `raw_text`: 文字起こしテキスト本体
-    /// - `timestamp`: ISO8601 タイムスタンプ
+    /// - `timestamp`: 表示用タイムスタンプ（例: `14:30:05`）
     /// - `source`: 音源種別（"microphone" / "system" 等）
     /// - `is_partial`: 途中結果かどうか
     /// - `confidence`: Whisper の confidence
@@ -196,6 +200,8 @@ impl ExternalWebRepository {
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(session_id, sequence_id) DO UPDATE SET
                 raw_text = excluded.raw_text,
+                timestamp = excluded.timestamp,
+                source = excluded.source,
                 is_partial = excluded.is_partial,
                 confidence = excluded.confidence,
                 audio_start_time = excluded.audio_start_time,

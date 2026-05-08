@@ -15,7 +15,7 @@ use sqlx::FromRow;
 /// `api_save_transcript` 完了後に `meeting_id` を紐付ける。
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 pub struct ExternalRecordingSession {
-    /// セッションを一意に識別する UUID 文字列
+    /// セッションを一意に識別する ID（例: `ext-session-<uuid>`）
     pub id: String,
     /// 紐づく meetings.id（録音中は None、保存完了後にセット）
     pub meeting_id: Option<String>,
@@ -48,7 +48,7 @@ pub struct ExternalTranscriptSegment {
     pub sequence_id: i64,
     /// 文字起こしテキスト本体（生データ。編集後テキストは revisions に置く）
     pub raw_text: String,
-    /// ISO8601 タイムスタンプ
+    /// 表示用タイムスタンプ（例: `14:30:05`）
     pub timestamp: String,
     /// "microphone" / "system" 等の音源種別
     pub source: Option<String>,
