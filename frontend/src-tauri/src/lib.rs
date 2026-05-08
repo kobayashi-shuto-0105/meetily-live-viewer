@@ -37,6 +37,7 @@ pub mod audio;
 pub mod config;
 pub mod console_utils;
 pub mod database;
+pub mod external_web;
 pub mod notifications;
 pub mod ollama;
 pub mod onboarding;
@@ -398,6 +399,9 @@ pub fn run() {
         )) as NotificationManagerState<tauri::Wry>)
         .manage(audio::init_system_audio_state())
         .manage(summary::summary_engine::ModelManagerState(Arc::new(tokio::sync::Mutex::new(None))))
+        // External Web UI 用の共有ステートを登録する。
+        // WebSocket broadcast チャネルと現在の録音セッション情報を管理する。
+        .manage(external_web::state::ExternalWebState::new())
         .setup(|_app| {
             log::info!("Application setup complete");
 

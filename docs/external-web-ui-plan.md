@@ -499,7 +499,7 @@ use super::types::{ExternalRecordingSession, ExternalWebEvent};
 
 #[derive(Clone)]
 pub struct ExternalWebState {
-    pub tx: broadcast::Sender<ExternalWebEvent>,
+    pub tx: broadcast::Sender<Arc<ExternalWebEvent>>,
     pub current_session: Arc<RwLock<Option<ExternalRecordingSession>>>,
 }
 
@@ -513,15 +513,17 @@ impl ExternalWebState {
         }
     }
 
-    pub fn subscribe(&self) -> broadcast::Receiver<ExternalWebEvent> {
+    pub fn subscribe(&self) -> broadcast::Receiver<Arc<ExternalWebEvent>> {
         self.tx.subscribe()
     }
 
     pub fn publish(&self, event: ExternalWebEvent) {
-        let _ = self.tx.send(event);
+        let _ = self.tx.send(Arc::new(event));
     }
 }
 ```
+
+`broadcast` は receiver ごとに payload を clone するため、チャネルには `ExternalWebEvent` を直接流さず `Arc<ExternalWebEvent>` を流す。これにより複数クライアント fan-out 時も `String` 群の複製を避け、参照カウントの増減だけで配信できる。
 
 `lib.rs` 側で `.manage(ExternalWebState::new())` する。
 
@@ -745,7 +747,7 @@ async fn handle_ws(socket: WebSocket, state: ServerState) {
     });
 
     while let Ok(event) = rx.recv().await {
-        let Ok(json) = serde_json::to_string(&event) else {
+        let Ok(json) = serde_json::to_string(event.as_ref()) else {
             continue;
         };
 
