@@ -153,13 +153,7 @@ async fn token_auth_middleware(
 
     // サーバーに設定されたトークンと比較する
     if provided_token != state.token {
-        log::warn!(
-            "External Web UI: unauthorized access attempt from {:?}",
-            request
-                .headers()
-                .get("x-forwarded-for")
-                .or_else(|| request.headers().get("host"))
-        );
+        log::warn!("External Web UI: unauthorized access attempt");
         return Err(StatusCode::UNAUTHORIZED);
     }
 

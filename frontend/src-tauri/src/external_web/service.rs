@@ -146,7 +146,16 @@ pub async fn handle_transcript_update(
     //    revision がない場合: raw_text をそのまま表示テキストとする
     let display_text = match ExternalWebRepository::get_active_revision(pool, &segment.id).await {
         Ok(revision) => revision.edited_text,
-        Err(_) => segment.raw_text.clone(),
+        Err(e) => {
+            // revision が見つからない場合は raw_text をそのまま使う（通常の動作）
+            // DB エラーの場合はログに記録して raw_text にフォールバックする
+            log::debug!(
+                "No active revision for segment {} (using raw_text): {}",
+                segment.id,
+                e
+            );
+            segment.raw_text.clone()
+        }
     };
 
     // 4. WebSocket クライアントにセグメント更新を通知する
