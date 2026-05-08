@@ -1,0 +1,145 @@
+name: "Lint"
+
+# ────────────────────────────────────────────────────────────
+# このワークフローはいつ動くの？
+#
+# on: でトリガー（起動条件）を定義する。
+#
+#   push.branches: 指定ブランチに直接 push したとき
+#   pull_request:  PR を作った / 更新したとき（全ブランチ対象）
+#
+# つまり「develop/main への直 push」か「どこからでも PR を出した
+# 瞬間」にコードチェックが走る。
+# ────────────────────────────────────────────────────────────
+on:
+  push:
+    branches:
+      - main     # 本番ブランチへの直 push
+      - develop  # 開発ブランチへの直 push
+  pull_request:  # PR 作成・更新のたびに実行（ブランチ問わず）
+
+# ────────────────────────────────────────────────────────────
+# 同じブランチ/PR で二重に CI が走るのを防ぐ設定。
+# 新しい push が来たら古い実行をキャンセルする。
+# ────────────────────────────────────────────────────────────
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+
+  # ────────────────────────────────────────────────────────
+  # ジョブ 1: TypeScript / Next.js のコード品質チェック
+  # ────────────────────────────────────────────────────────
+  frontend:
+    name: Frontend (ESLint + tsc)
+    runs-on: ubuntu-latest  # GitHub が用意した Ubuntu の仮想マシンで動かす
+    defaults:
+      run:
+        working-directory: frontend  # 以降の run コマンドはすべて frontend/ 内で実行
+    steps:
+      # リポジトリのコードを仮想マシンにダウンロード
+      - uses: actions/checkout@v4
+
+      # pnpm（パッケージマネージャ）を使えるようにする
+      - uses: pnpm/action-setup@v4
+        with:
+          version: latest
+
+      # Node.js v20 をセットアップ。
+      # NOTE: 現在リポジトリに pnpm-lock.yaml が無いため pnpm キャッシュは無効化。
+      # ロックファイルをコミットするようになったら下記を有効化:
+      #   cache: "pnpm"
+      #   cache-dependency-path: frontend/pnpm-lock.yaml
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      # ロックファイルが無いうちは --frozen-lockfile を付けない。
+      # ロックファイルを導入後は `pnpm install --frozen-lockfile` に切り替える。
+      - name: Install dependencies
+        run: pnpm install
+
+      # ESLint: コードのバグになりやすいパターンや書き方の問題を検出
+      - name: ESLint
+        run: pnpm lint
+
+      # tsc --noEmit: TypeScript の型エラーをチェック（ファイルは出力しない）
+      - name: TypeScript type check
+        run: pnpm exec tsc --noEmit
+
+  # ────────────────────────────────────────────────────────
+  # ジョブ 2: Rust (Tauri バックエンド) のコード品質チェック
+  # ────────────────────────────────────────────────────────
+  rust:
+    name: Rust (clippy + fmt)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Tauri を Linux でビルド・チェックするために必要な C ライブラリ群をインストール
+      # (WebKit/GTK/SQLite/OpenSSL など)
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libsqlite3-dev \
+            libssl-dev \
+            pkg-config
+
+      # Rust の安定版ツールチェーンをインストール。
+      # clippy: lint ツール / rustfmt: フォーマッタ も一緒に入れる
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      # Rust のビルドキャッシュ。依存クレートのコンパイル結果を再利用して高速化
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: frontend/src-tauri
+
+      # cargo fmt --check: コードが rustfmt の書式に合っているか確認
+      # （実際にファイルを変更はしない。違反があればエラー）
+      - name: cargo fmt
+        run: cargo fmt --manifest-path frontend/src-tauri/Cargo.toml --all -- --check
+
+      # cargo clippy: Rust の静的解析。
+      # NOTE: 既存コードに多数の clippy 警告が残っているため、初期段階では
+      # `-D warnings` を付けず警告のみ表示する運用にしている。コードを段階的に
+      # クリーンアップしたら `-- -D warnings` に戻して警告ゼロを強制する。
+      - name: cargo clippy
+        run: cargo clippy --manifest-path frontend/src-tauri/Cargo.toml --all-targets
+
+  # ────────────────────────────────────────────────────────
+  # ジョブ 3: Python (FastAPI バックエンド) のコード品質チェック
+  # ────────────────────────────────────────────────────────
+  backend:
+    name: Backend (ruff)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend  # 以降の run コマンドは backend/ 内で実行
+    steps:
+      - uses: actions/checkout@v4
+
+      # Python 3.11 をセットアップ
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # ruff: Python 用の超高速 lint & フォーマッタ（Rust 製）
+      - name: Install ruff
+        run: pip install ruff
+
+      # ruff check: import 順・未使用変数・バグパターンなどを検出
+      - name: ruff check
+        run: ruff check .
+
+      # ruff format --check: コードが ruff のフォーマットに合っているか確認
+      # （実際にファイルは変更しない）
+      - name: ruff format check
+        run: ruff format --check .
