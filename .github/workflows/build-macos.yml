@@ -21,6 +21,17 @@ on:
         required: true
         type: boolean
         default: true
+  push:
+    branches:
+      - main
+      - develop
+      - devtest
+  pull_request:
+    branches:
+      - main
+      - develop
+      - devtest
+    types: [opened, synchronize, reopened]
 
 # Cancel duplicate workflow runs
 concurrency:
@@ -154,7 +165,7 @@ jobs:
           key: ${{ runner.os }}-ffmpeg-${{ hashFiles('frontend/src-tauri/build.rs', 'frontend/src-tauri/build/ffmpeg.rs') }}
 
       - name: Build Tauri app (with code signing)
-        if: ${{ github.event.inputs.sign-build == 'true' }}
+        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.sign-build == 'true' }}
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -179,7 +190,7 @@ jobs:
           args: --target aarch64-apple-darwin ${{ steps.build-profile.outputs.args }}
 
       - name: Build Tauri app (unsigned)
-        if: ${{ github.event.inputs.sign-build != 'true' }}
+        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.sign-build != 'true' }}
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -194,6 +205,20 @@ jobs:
         with:
           projectPath: frontend
           args: --target aarch64-apple-darwin ${{ steps.build-profile.outputs.args }}
+
+      - name: Build Tauri app (PR/push unsigned)
+        if: ${{ github.event_name != 'workflow_dispatch' }}
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # License validation RSA public key (embedded at build time)
+          MEETILY_RSA_PUBLIC_KEY: ${{ secrets.MEETILY_RSA_PUBLIC_KEY }}
+          # Supabase configuration (for online license verification)
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        with:
+          projectPath: frontend
+          args: --target aarch64-apple-darwin ${{ steps.build-profile.outputs.args }} --config '{"bundle":{"createUpdaterArtifacts":false}}'
 
       - name: Verify build artifacts
         run: |

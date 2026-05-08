@@ -1,9 +1,26 @@
 name: "Build Test"
 
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - develop
+      - devtest
+  pull_request:
+    branches:
+      - main
+      - develop
+      - devtest
+    types: [opened, synchronize, reopened]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build-test:
+    if: ${{ github.event_name == 'workflow_dispatch' }}
     permissions:
       contents: write
     strategy:
@@ -32,4 +49,19 @@ jobs:
       asset-prefix: "meetily-test"
       upload-artifacts: true
       is-debug-build: ${{ contains(matrix.args, '--debug') }}
+    secrets: inherit
+
+  build-test-macos:
+    if: ${{ github.event_name != 'workflow_dispatch' }}
+    permissions:
+      contents: read
+    uses: ./.github/workflows/build.yml
+    with:
+      platform: "macos-latest"
+      target: "aarch64-apple-darwin"
+      build-args: --target aarch64-apple-darwin --config '{"bundle":{"createUpdaterArtifacts":false}}'
+      sign-binaries: false
+      asset-prefix: "meetily-test"
+      upload-artifacts: false
+      is-debug-build: false
     secrets: inherit
