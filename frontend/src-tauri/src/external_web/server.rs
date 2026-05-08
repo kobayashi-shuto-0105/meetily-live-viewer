@@ -258,11 +258,25 @@ async fn get_session_transcripts(
                 // コメントとハイライトも合わせて返す
                 let comments = ExternalWebRepository::get_comments_by_segment(&state.pool, &seg.id)
                     .await
-                    .unwrap_or_default();
+                    .unwrap_or_else(|e| {
+                        log::warn!(
+                            "Failed to load comments for segment {} (returning empty): {}",
+                            seg.id,
+                            e
+                        );
+                        vec![]
+                    });
                 let highlights =
                     ExternalWebRepository::get_highlights_by_segment(&state.pool, &seg.id)
                         .await
-                        .unwrap_or_default();
+                        .unwrap_or_else(|e| {
+                            log::warn!(
+                                "Failed to load highlights for segment {} (returning empty): {}",
+                                seg.id,
+                                e
+                            );
+                            vec![]
+                        });
 
                 views.push(serde_json::json!({
                     "id": seg.id,
@@ -328,11 +342,25 @@ async fn get_meeting_transcripts(
                 let display_text = resolve_display_text(&state.pool, &seg.id, &seg.raw_text).await;
                 let comments = ExternalWebRepository::get_comments_by_segment(&state.pool, &seg.id)
                     .await
-                    .unwrap_or_default();
+                    .unwrap_or_else(|e| {
+                        log::warn!(
+                            "Failed to load comments for segment {} (returning empty): {}",
+                            seg.id,
+                            e
+                        );
+                        vec![]
+                    });
                 let highlights =
                     ExternalWebRepository::get_highlights_by_segment(&state.pool, &seg.id)
                         .await
-                        .unwrap_or_default();
+                        .unwrap_or_else(|e| {
+                            log::warn!(
+                                "Failed to load highlights for segment {} (returning empty): {}",
+                                seg.id,
+                                e
+                            );
+                            vec![]
+                        });
 
                 views.push(serde_json::json!({
                     "id": seg.id,
@@ -384,6 +412,7 @@ async fn get_meeting_transcripts(
 
 /// 文字起こし修正リクエストのボディ。
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct CreateRevisionRequest {
     /// 修正後のテキスト
     edited_text: String,
@@ -442,13 +471,15 @@ async fn create_revision(
                 .into_response()
         }
         Err(e) => {
+            let status = classify_db_error(&e);
             log::error!(
-                "External Web UI: failed to create revision (segment_id={}): {}",
+                "External Web UI: failed to create revision (segment_id={}, status={}): {}",
                 segment_id,
+                status,
                 e
             );
             (
-                StatusCode::INTERNAL_SERVER_ERROR,
+                status,
                 Json(serde_json::json!({
                     "error": "Failed to create revision"
                 })),
@@ -535,13 +566,15 @@ async fn create_comment(
                 .into_response()
         }
         Err(e) => {
+            let status = classify_db_error(&e);
             log::error!(
-                "External Web UI: failed to create comment (segment_id={}): {}",
+                "External Web UI: failed to create comment (segment_id={}, status={}): {}",
                 segment_id,
+                status,
                 e
             );
             (
-                StatusCode::INTERNAL_SERVER_ERROR,
+                status,
                 Json(serde_json::json!({
                     "error": "Failed to create comment"
                 })),
@@ -628,13 +661,15 @@ async fn create_highlight(
                 .into_response()
         }
         Err(e) => {
+            let status = classify_db_error(&e);
             log::error!(
-                "External Web UI: failed to create highlight (segment_id={}): {}",
+                "External Web UI: failed to create highlight (segment_id={}, status={}): {}",
                 segment_id,
+                status,
                 e
             );
             (
-                StatusCode::INTERNAL_SERVER_ERROR,
+                status,
                 Json(serde_json::json!({
                     "error": "Failed to create highlight"
                 })),
@@ -647,6 +682,18 @@ async fn create_highlight(
 // =============================================================================
 // ヘルパー関数
 // =============================================================================
+
+/// DB エラーを適切な HTTP ステータスコードに分類するヘルパー。
+/// - FK 制約違反 or 行なし → 404 Not Found（クライアント起因）
+/// - それ以外 → 500 Internal Server Error
+fn classify_db_error(e: &anyhow::Error) -> StatusCode {
+    let msg = e.to_string();
+    if msg.contains("FOREIGN KEY") || msg.contains("no rows returned") {
+        StatusCode::NOT_FOUND
+    } else {
+        StatusCode::INTERNAL_SERVER_ERROR
+    }
+}
 
 /// セグメントの display_text を決定するヘルパー。
 /// active revision が存在すればその edited_text を、なければ raw_text を返す。
@@ -749,8 +796,11 @@ mod tests {
 
     /// テスト用のインメモリ SQLite プールを作成するヘルパー。
     /// マイグレーションを適用して全テーブルを利用可能にする。
+    /// max_connections(1) でシングルコネクションにし、全クエリが同一の
+    /// インメモリ DB を参照することを保証する（複数コネクション時は各々が独立した DB を持つ）。
     async fn test_pool() -> SqlitePool {
         let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
             .connect("sqlite::memory:")
             .await
             .expect("Failed to create in-memory SQLite pool");
@@ -952,8 +1002,8 @@ mod tests {
                     .header("content-type", "application/json")
                     .body(Body::from(
                         serde_json::to_string(&serde_json::json!({
-                            "edited_text": "Hello, World!",
-                            "editor_name": "tester"
+                            "editedText": "Hello, World!",
+                            "editorName": "tester"
                         }))
                         .unwrap(),
                     ))
