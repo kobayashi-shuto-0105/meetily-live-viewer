@@ -493,8 +493,15 @@ pub fn run() {
                     .state::<external_web::state::ExternalWebState>()
                     .inner()
                     .clone();
+                // REST API エンドポイントが DB にアクセスするため、pool を渡す
+                let pool = _app
+                    .handle()
+                    .state::<state::AppState>()
+                    .db_manager
+                    .pool()
+                    .clone();
                 tauri::async_runtime::spawn(async move {
-                    if let Err(e) = external_web::server::run(ext_state).await {
+                    if let Err(e) = external_web::server::run(ext_state, pool).await {
                         log::error!("External Web UI server failed: {}", e);
                     }
                 });
