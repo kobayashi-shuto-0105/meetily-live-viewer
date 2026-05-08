@@ -8,7 +8,7 @@
 // 設計方針:
 //   - 各 payload は必要最小限のフィールドのみ含む
 //   - `display_text` は service 層で raw_text or active revision から決定する
-//   - f64 精度は既存 TranscriptUpdate と合わせる（プラン §0.1）
+//   - time 系フィールドは既存 TranscriptUpdate と合わせて f64 にする（プラン §0.1）
 // =============================================================================
 
 use serde::{Deserialize, Serialize};
@@ -96,7 +96,7 @@ pub struct TranscriptSegmentPayload {
     /// 途中結果(true) か確定結果(false) か
     pub is_partial: bool,
     /// Whisper の信頼度スコア（0.0〜1.0）
-    pub confidence: f64,
+    pub confidence: f32,
     /// 録音開始からの相対秒数（開始位置）
     pub audio_start_time: f64,
     /// 録音開始からの相対秒数（終了位置）

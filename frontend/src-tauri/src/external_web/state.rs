@@ -51,7 +51,7 @@ pub struct CurrentSession {
 pub struct ExternalWebState {
     /// WebSocket クライアントへの broadcast 送信側。
     /// `subscribe()` で受信側を取得し、各 WebSocket 接続が受信ループを回す。
-    tx: broadcast::Sender<ExternalWebEvent>,
+    tx: broadcast::Sender<Arc<ExternalWebEvent>>,
 
     /// 現在アクティブな録音セッション。
     /// 録音中のみ Some を持ち、停止後は None になる。
@@ -76,7 +76,7 @@ impl ExternalWebState {
 
     /// broadcast チャネルの受信側を取得する。
     /// 各 WebSocket 接続ごとに 1 つの Receiver を持ち、イベントループで受信する。
-    pub fn subscribe(&self) -> broadcast::Receiver<ExternalWebEvent> {
+    pub fn subscribe(&self) -> broadcast::Receiver<Arc<ExternalWebEvent>> {
         self.tx.subscribe()
     }
 
@@ -85,7 +85,7 @@ impl ExternalWebState {
     pub fn publish(&self, event: ExternalWebEvent) {
         // send() は受信者がいない場合 Err を返すが、それは正常動作
         // （まだクライアントが接続していない状態）
-        let _ = self.tx.send(event);
+        let _ = self.tx.send(Arc::new(event));
     }
 }
 
