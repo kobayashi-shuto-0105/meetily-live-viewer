@@ -928,7 +928,7 @@ pub async fn api_save_meeting_title<R: Runtime>(
 
 #[tauri::command]
 pub async fn api_save_transcript<R: Runtime>(
-    _app: AppHandle<R>,
+    app: AppHandle<R>,
     state: tauri::State<'_, AppState>,
     meeting_title: String,
     transcripts: Vec<serde_json::Value>,
@@ -986,6 +986,63 @@ pub async fn api_save_transcript<R: Runtime>(
                 "Successfully saved transcript and created meeting with id: {}",
                 meeting_id
             );
+
+            // External Web UI: セッションを meeting に紐付ける（§10.3）
+            // 録音中の session_id と保存後の meeting_id を対応させ、
+            // WebSocket クライアントに MeetingPersisted を通知する
+            {
+                use tauri::Manager;
+
+                if let Some(ext_state) =
+                    app.try_state::<crate::external_web::state::ExternalWebState>()
+                {
+                    // 最新の停止済み・未 finalize セッションを探す。
+                    // stop_external_session で stopped_at が設定済みだが、
+                    // meeting_id / finalized_at がまだ NULL のセッションが対象。
+                    let pool_for_ext = state.db_manager.pool();
+                    match sqlx::query_as::<_, crate::database::models::ExternalRecordingSession>(
+                        "SELECT id, meeting_id, meeting_title, started_at, stopped_at, finalized_at, created_at, updated_at
+                         FROM external_recording_sessions
+                         WHERE stopped_at IS NOT NULL
+                           AND meeting_id IS NULL
+                           AND finalized_at IS NULL
+                         ORDER BY stopped_at DESC, created_at DESC
+                         LIMIT 1",
+                    )
+                    .fetch_optional(pool_for_ext)
+                    .await
+                    {
+                        Ok(Some(session)) => {
+                            if let Err(e) =
+                                crate::external_web::service::finalize_external_session(
+                                    pool_for_ext,
+                                    ext_state.inner(),
+                                    &session.id,
+                                    &meeting_id,
+                                )
+                                .await
+                            {
+                                log_error!(
+                                    "Failed to finalize external session: {}",
+                                    e
+                                );
+                            }
+                        }
+                        Ok(None) => {
+                            log_debug!(
+                                "No unfinalized external session found (expected if External Web UI not in use)"
+                            );
+                        }
+                        Err(e) => {
+                            log_debug!(
+                                "Failed to query external sessions: {}",
+                                e
+                            );
+                        }
+                    }
+                }
+            }
+
             Ok(serde_json::json!({
                 "status": "success",
                 "message": "Transcript saved successfully",

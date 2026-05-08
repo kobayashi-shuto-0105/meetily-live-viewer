@@ -484,6 +484,22 @@ pub fn run() {
             })
             .expect("Failed to initialize database");
 
+            // External Web UI サーバーを非同期タスクとして起動する。
+            // DB 初期化完了後に起動することで、AppState が利用可能な状態を保証する（§0.8）。
+            // サーバーはバックグラウンドで動作し、アプリ終了時に自動停止する。
+            {
+                let ext_state = _app
+                    .handle()
+                    .state::<external_web::state::ExternalWebState>()
+                    .inner()
+                    .clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(e) = external_web::server::run(ext_state).await {
+                        log::error!("External Web UI server failed: {}", e);
+                    }
+                });
+            }
+
             // Initialize bundled templates directory for dynamic template discovery
             log::info!("Initializing bundled templates directory...");
             if let Ok(resource_path) = _app.handle().path().resource_dir() {

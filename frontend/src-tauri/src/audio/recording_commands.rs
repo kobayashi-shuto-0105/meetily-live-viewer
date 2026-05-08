@@ -31,6 +31,10 @@ use super::transcription::{
 // Re-export TranscriptUpdate for backward compatibility
 pub use super::transcription::TranscriptUpdate;
 
+// External Web UI のステートとサービスをインポートする
+use crate::external_web::state::ExternalWebState;
+use crate::state::AppState;
+
 // ============================================================================
 // GLOBAL STATE
 // ============================================================================
@@ -59,6 +63,87 @@ pub struct TranscriptionStatus {
     pub chunks_in_queue: usize,
     pub is_processing: bool,
     pub last_activity_ms: u64,
+}
+
+// ============================================================================
+// EXTERNAL WEB UI ヘルパー
+// ============================================================================
+
+/// External Web UI への文字起こし転送ヘルパー関数（プラン §0.5）。
+///
+/// `transcript-update` イベントリスナーが 2 箇所（L262 / L430 相当）に存在するため、
+/// 共通ヘルパーに切り出して重複を避ける。
+///
+/// AppState が未初期化（初回起動時）の場合は何もしない（§0.8 対応）。
+fn forward_to_external<R: Runtime>(app: &AppHandle<R>, update: TranscriptUpdate) {
+    // AppState が未初期化（初回起動時）の場合は転送をスキップする
+    let Some(app_state) = app.try_state::<AppState>() else {
+        return;
+    };
+
+    // ExternalWebState が登録されていない場合もスキップする
+    let Some(ext_state) = app.try_state::<ExternalWebState>() else {
+        return;
+    };
+
+    let pool = app_state.db_manager.pool().clone();
+    let ext = ext_state.inner().clone();
+
+    // 非同期タスクとして DB upsert + broadcast を実行する
+    // リスナーは同期コンテキストなので spawn が必要
+    tauri::async_runtime::spawn(async move {
+        if let Err(e) =
+            crate::external_web::service::handle_transcript_update(&pool, &ext, &update).await
+        {
+            log::error!("Failed to forward transcript to External Web UI: {}", e);
+        }
+    });
+}
+
+/// External Web UI の録音セッションを開始するヘルパー。
+///
+/// AppState が未初期化の場合は何もしない（§0.8 対応）。
+async fn start_external_session_helper<R: Runtime>(
+    app: &AppHandle<R>,
+    meeting_title: Option<String>,
+) {
+    // AppState が未初期化の場合はスキップする
+    let Some(app_state) = app.try_state::<AppState>() else {
+        log::warn!("External Web UI: AppState not initialized, skipping session start");
+        return;
+    };
+    let Some(ext_state) = app.try_state::<ExternalWebState>() else {
+        return;
+    };
+
+    let pool = app_state.db_manager.pool();
+
+    if let Err(e) =
+        crate::external_web::service::start_external_session(pool, ext_state.inner(), meeting_title)
+            .await
+    {
+        log::error!("Failed to start External Web UI session: {}", e);
+    }
+}
+
+/// External Web UI の録音セッションを停止するヘルパー。
+///
+/// AppState が未初期化の場合は何もしない（§0.8 対応）。
+async fn stop_external_session_helper<R: Runtime>(app: &AppHandle<R>) {
+    let Some(app_state) = app.try_state::<AppState>() else {
+        return;
+    };
+    let Some(ext_state) = app.try_state::<ExternalWebState>() else {
+        return;
+    };
+
+    let pool = app_state.db_manager.pool();
+
+    if let Err(e) =
+        crate::external_web::service::stop_external_session(pool, ext_state.inner()).await
+    {
+        log::error!("Failed to stop External Web UI session: {}", e);
+    }
 }
 
 // ============================================================================
@@ -247,6 +332,10 @@ pub async fn start_recording_with_meeting_name<R: Runtime>(
     IS_RECORDING.store(true, Ordering::SeqCst);
     reset_speech_detected_flag(); // Reset for new recording session
 
+    // External Web UI: 録音セッションを開始する（§10.1）
+    // DB にセッションレコードを作成し、WebSocket クライアントに RecordingStarted を通知する
+    start_external_session_helper(&app, meeting_name.clone()).await;
+
     // Start optimized parallel transcription task and store handle
     let task_handle = transcription::start_transcription_task(app.clone(), transcription_receiver);
     {
@@ -259,6 +348,8 @@ pub async fn start_recording_with_meeting_name<R: Runtime>(
     // Store listener ID for cleanup during stop_recording to ensure microphone is released
     {
         use tauri::Listener;
+        // External Web UI への転送用に AppHandle をクローンする
+        let app_for_listener = app.clone();
         let listener_id = app.listen("transcript-update", move |event: tauri::Event| {
             // Parse the transcript update from the event payload
             if let Ok(update) = serde_json::from_str::<TranscriptUpdate>(event.payload()) {
@@ -280,6 +371,10 @@ pub async fn start_recording_with_meeting_name<R: Runtime>(
                         manager.add_transcript_segment(segment);
                     }
                 }
+
+                // External Web UI へ転送する（§9.1）
+                // DB へのセグメント upsert と WebSocket broadcast を非同期で実行する
+                forward_to_external(&app_for_listener, update);
             }
         });
         let mut global_listener = TRANSCRIPT_LISTENER_ID.lock().unwrap();
@@ -415,6 +510,10 @@ pub async fn start_recording_with_devices_and_meeting<R: Runtime>(
     IS_RECORDING.store(true, Ordering::SeqCst);
     reset_speech_detected_flag(); // Reset for new recording session
 
+    // External Web UI: 録音セッションを開始する（§10.1）
+    // DB にセッションレコードを作成し、WebSocket クライアントに RecordingStarted を通知する
+    start_external_session_helper(&app, meeting_name.clone()).await;
+
     // Start optimized parallel transcription task and store handle
     let task_handle = transcription::start_transcription_task(app.clone(), transcription_receiver);
     {
@@ -427,6 +526,8 @@ pub async fn start_recording_with_devices_and_meeting<R: Runtime>(
     // Store listener ID for cleanup during stop_recording to ensure microphone is released
     {
         use tauri::Listener;
+        // External Web UI への転送用に AppHandle をクローンする
+        let app_for_listener = app.clone();
         let listener_id = app.listen("transcript-update", move |event: tauri::Event| {
             // Parse the transcript update from the event payload
             if let Ok(update) = serde_json::from_str::<TranscriptUpdate>(event.payload()) {
@@ -448,6 +549,10 @@ pub async fn start_recording_with_devices_and_meeting<R: Runtime>(
                         manager.add_transcript_segment(segment);
                     }
                 }
+
+                // External Web UI へ転送する（§9.1）
+                // DB へのセグメント upsert と WebSocket broadcast を非同期で実行する
+                forward_to_external(&app_for_listener, update);
             }
         });
         let mut global_listener = TRANSCRIPT_LISTENER_ID.lock().unwrap();
@@ -528,16 +633,6 @@ pub async fn stop_recording<R: Runtime>(
         }
     }
 
-    // Step 1.5: Clean up transcript listener to release microphone
-    // Unlisten transcript-update event to prevent lingering references
-    {
-        use tauri::Listener;
-        if let Some(listener_id) = TRANSCRIPT_LISTENER_ID.lock().unwrap().take() {
-            app.unlisten(listener_id);
-            info!("✅ Transcript-update listener removed");
-        }
-    }
-
     // Step 2: Signal transcription workers to finish processing ALL queued chunks
     let _ = app.emit(
         "recording-shutdown-progress",
@@ -602,6 +697,17 @@ pub async fn stop_recording<R: Runtime>(
         progress_task.abort();
     } else {
         info!("ℹ️ No transcription task found to wait for");
+    }
+
+    // Step 2.5: Clean up transcript listener after queued chunks have been drained.
+    // Keeping it registered through Step 2 lets final transcript-update events reach
+    // both the recording history and the External Web UI.
+    {
+        use tauri::Listener;
+        if let Some(listener_id) = TRANSCRIPT_LISTENER_ID.lock().unwrap().take() {
+            app.unlisten(listener_id);
+            info!("✅ Transcript-update listener removed");
+        }
     }
 
     // Step 3: Now safely unload Whisper model after ALL chunks are processed
@@ -861,6 +967,10 @@ pub async fn stop_recording<R: Runtime>(
 
     // Database save removed - frontend will handle this after receiving all transcripts
     info!("ℹ️ Skipping database save in Rust - frontend will save after all transcripts received");
+
+    // External Web UI: 録音セッションを停止する（§10.2）
+    // DB の stopped_at を更新し、WebSocket クライアントに RecordingStopped を通知する
+    stop_external_session_helper(&app).await;
 
     // Step 5: Complete shutdown
     let _ = app.emit(
