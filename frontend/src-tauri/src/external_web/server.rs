@@ -686,7 +686,8 @@ async fn create_highlight(
 /// DB エラーを適切な HTTP ステータスコードに分類するヘルパー。
 /// - FK 制約違反 or 行なし → 404 Not Found（クライアント起因）
 /// - それ以外 → 500 Internal Server Error
-fn classify_db_error(e: &anyhow::Error) -> StatusCode {
+/// Display トレイト経由で sqlx::Error / anyhow::Error 両方を受け取れる。
+fn classify_db_error(e: &dyn std::fmt::Display) -> StatusCode {
     let msg = e.to_string();
     if msg.contains("FOREIGN KEY") || msg.contains("no rows returned") {
         StatusCode::NOT_FOUND
