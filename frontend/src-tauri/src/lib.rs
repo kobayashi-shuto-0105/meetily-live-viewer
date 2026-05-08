@@ -28,10 +28,6 @@ macro_rules! perf_trace {
     ($($arg:tt)*) => {};
 }
 
-// Make these macros available to other modules
-pub(crate) use perf_debug;
-pub(crate) use perf_trace;
-
 // Re-export async logging macros for external use (removed due to macro conflicts)
 
 // Declare audio module
@@ -631,14 +627,14 @@ pub fn run() {
             api::api_get_custom_openai_config,
             api::api_test_custom_openai_connection,
             // Summary commands
-            summary::api_process_transcript,
-            summary::api_get_summary,
-            summary::api_save_meeting_summary,
-            summary::api_cancel_summary,
+            summary::commands::api_process_transcript,
+            summary::commands::api_get_summary,
+            summary::commands::api_save_meeting_summary,
+            summary::commands::api_cancel_summary,
             // Template commands
-            summary::api_list_templates,
-            summary::api_get_template_details,
-            summary::api_validate_template,
+            summary::template_commands::api_list_templates,
+            summary::template_commands::api_get_template_details,
+            summary::template_commands::api_validate_template,
             // Built-in AI commands
             summary::summary_engine::commands::builtin_ai_list_models,
             summary::summary_engine::commands::builtin_ai_get_model_info,
