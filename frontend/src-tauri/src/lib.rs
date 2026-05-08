@@ -493,11 +493,23 @@ pub fn run() {
                     .state::<external_web::state::ExternalWebState>()
                     .inner()
                     .clone();
-                tauri::async_runtime::spawn(async move {
-                    if let Err(e) = external_web::server::run(ext_state).await {
-                        log::error!("External Web UI server failed: {}", e);
+                // REST API エンドポイントが DB にアクセスするため、pool を渡す
+                // try_state() で AppState の管理状態を安全に確認し、未登録時はサーバー起動をスキップする
+                match _app.handle().try_state::<state::AppState>() {
+                    Some(app_state) => {
+                        let pool = app_state.db_manager.pool().clone();
+                        tauri::async_runtime::spawn(async move {
+                            if let Err(e) = external_web::server::run(ext_state, pool).await {
+                                log::error!("External Web UI server failed: {}", e);
+                            }
+                        });
                     }
-                });
+                    None => {
+                        log::error!(
+                            "External Web UI: AppState not yet managed, cannot start External Web server"
+                        );
+                    }
+                }
             }
 
             // Initialize bundled templates directory for dynamic template discovery
