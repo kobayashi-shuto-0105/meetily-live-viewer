@@ -5,6 +5,17 @@ name: "Validation Check"
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+      - develop
+      - devtest
+  pull_request:
+    branches:
+      - main
+      - develop
+      - devtest
+    types: [opened, synchronize, reopened]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
