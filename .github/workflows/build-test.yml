@@ -54,7 +54,7 @@ jobs:
   build-test-macos:
     if: ${{ github.event_name != 'workflow_dispatch' }}
     permissions:
-      contents: read
+      contents: write
     uses: ./.github/workflows/build.yml
     with:
       platform: "macos-latest"
