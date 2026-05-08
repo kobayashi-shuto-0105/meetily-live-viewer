@@ -996,15 +996,17 @@ pub async fn api_save_transcript<R: Runtime>(
                 if let Some(ext_state) =
                     app.try_state::<crate::external_web::state::ExternalWebState>()
                 {
-                    // 最新の未 finalize セッションを探す。
+                    // 最新の停止済み・未 finalize セッションを探す。
                     // stop_external_session で stopped_at が設定済みだが、
-                    // finalized_at がまだ NULL のセッションが対象。
+                    // meeting_id / finalized_at がまだ NULL のセッションが対象。
                     let pool_for_ext = state.db_manager.pool();
                     match sqlx::query_as::<_, crate::database::models::ExternalRecordingSession>(
                         "SELECT id, meeting_id, meeting_title, started_at, stopped_at, finalized_at, created_at, updated_at
                          FROM external_recording_sessions
-                         WHERE finalized_at IS NULL
-                         ORDER BY created_at DESC
+                         WHERE stopped_at IS NOT NULL
+                           AND meeting_id IS NULL
+                           AND finalized_at IS NULL
+                         ORDER BY stopped_at DESC, created_at DESC
                          LIMIT 1",
                     )
                     .fetch_optional(pool_for_ext)

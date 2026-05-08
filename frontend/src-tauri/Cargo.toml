@@ -109,7 +109,6 @@ thiserror = "2.0.16"                # Error handling for Parakeet
 # Async
 tokio = { version = "1.32.0", features = ["full", "tracing"] }
 tokio-util = "0.7"  # Utilities for tokio including CancellationToken
-tokio-tungstenite = "0.21"  # WebSocket server for external read-only live transcript viewer
 axum = { version = "0.8", features = ["ws"] }  # External Web UI 用 HTTP/WebSocket サーバー
 tower-http = { version = "0.6", features = ["cors"] }  # CORS middleware for External Web UI
 async-trait = "0.1"  # Trait abstraction for async methods

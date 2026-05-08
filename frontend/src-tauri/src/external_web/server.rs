@@ -28,7 +28,6 @@
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::Arc;
 
 use axum::{
     extract::{
@@ -70,9 +69,8 @@ pub struct ServerState {
 /// # エラー
 /// バインドアドレスのパースや TCP リスナーの作成に失敗した場合にエラーを返す。
 pub async fn run(external_state: ExternalWebState) -> anyhow::Result<()> {
-    // 認証トークンを環境変数から取得する（未設定時はデフォルト値）
-    let token = std::env::var("MEETILY_EXT_TOKEN")
-        .unwrap_or_else(|_| "dev-token".to_string());
+    // 認証トークンを環境変数から取得する（ローカル開発のみ未設定時はデフォルト値）
+    let token_from_env = std::env::var("MEETILY_EXT_TOKEN").ok();
 
     // バインドアドレスを環境変数から取得する（デフォルトはローカルのみ）
     let bind = std::env::var("MEETILY_EXT_BIND")
@@ -80,12 +78,20 @@ pub async fn run(external_state: ExternalWebState) -> anyhow::Result<()> {
 
     let addr: SocketAddr = bind.parse()?;
 
-    // 0.0.0.0 バインド時は空トークンを拒否する（セキュリティ要件 §0.2）
-    if addr.ip().is_unspecified() && token.is_empty() {
-        anyhow::bail!(
-            "MEETILY_EXT_TOKEN must be set when binding to 0.0.0.0 (LAN/public access)"
-        );
-    }
+    let token = match token_from_env {
+        Some(token) if !token.is_empty() => token,
+        Some(_) if addr.ip().is_unspecified() => {
+            anyhow::bail!(
+                "MEETILY_EXT_TOKEN must be non-empty when binding to 0.0.0.0 (LAN/public access)"
+            );
+        }
+        None if addr.ip().is_unspecified() => {
+            anyhow::bail!(
+                "MEETILY_EXT_TOKEN must be set when binding to 0.0.0.0 (LAN/public access)"
+            );
+        }
+        _ => "dev-token".to_string(),
+    };
 
     let state = ServerState {
         external_state,

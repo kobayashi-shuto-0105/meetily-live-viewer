@@ -145,12 +145,12 @@ pub async fn handle_transcript_update(
     //    revision がある場合: edited_text を表示テキストとする
     //    revision がない場合: raw_text をそのまま表示テキストとする
     let display_text = match ExternalWebRepository::get_active_revision(pool, &segment.id).await {
-        Ok(revision) => revision.edited_text,
+        Ok(Some(revision)) => revision.edited_text,
+        Ok(None) => segment.raw_text.clone(),
         Err(e) => {
-            // revision が見つからない場合は raw_text をそのまま使う（通常の動作）
             // DB エラーの場合はログに記録して raw_text にフォールバックする
-            log::debug!(
-                "No active revision for segment {} (using raw_text): {}",
+            log::warn!(
+                "Failed to load active revision for segment {} (using raw_text): {}",
                 segment.id,
                 e
             );
