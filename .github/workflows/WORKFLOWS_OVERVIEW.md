@@ -2,7 +2,7 @@
 
 This document provides a quick overview of all available CI/CD workflows in this repository.
 
-**Note:** All workflows in this repository use **manual triggers only** (`workflow_dispatch`). There are no automatic triggers from push or pull request events.
+**Note:** Release-oriented workflows remain manually triggered (`workflow_dispatch`). `Build and Test - macOS`, `Build Test`, and `Validation Check` also run automatically for pushes and pull requests targeting `main`, `develop`, or `devtest`.
 
 ## Workflow Files
 
@@ -35,7 +35,12 @@ This document provides a quick overview of all available CI/CD workflows in this
 - macOS-focused optimizations
 
 **Triggers:**
-- Manual dispatch only
+- Manual dispatch
+- Push and pull request events targeting `main`, `develop`, or `devtest`
+
+**PR behavior:**
+- Runs the existing macOS Tauri build path
+- Disables binary signing, updater artifact signing, and artifact upload for automatic PR/push runs
 
 **Use When:**
 - macOS-specific development
@@ -107,7 +112,13 @@ This document provides a quick overview of all available CI/CD workflows in this
 - Artifacts prefixed with `meetily-test-`
 
 **Triggers:**
-- Manual dispatch only
+- Manual dispatch
+- Push and pull request events targeting `main`, `develop`, or `devtest`
+
+**PR behavior:**
+- Runs the reusable `build.yml` workflow for macOS only
+- Disables binary signing, updater artifact signing, and artifact upload for automatic PR/push runs
+- Keeps the existing all-platform signed matrix for manual dispatch runs
 
 **Use When:**
 - Pre-release testing
@@ -174,7 +185,8 @@ This document provides a quick overview of all available CI/CD workflows in this
 - Provides next steps guidance
 
 **Triggers:**
-- Manual dispatch only
+- Manual dispatch
+- Push and pull request events targeting `main`, `develop`, or `devtest`
 
 **Use When:**
 - Quick configuration check
