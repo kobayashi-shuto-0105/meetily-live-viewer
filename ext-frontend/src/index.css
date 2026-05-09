@@ -1110,8 +1110,8 @@ button:disabled { cursor: default; }
 
 .segment-sidecar::before {
   top: 36px;
-  left: -16px;
-  width: 16px;
+  left: -20px;
+  width: 20px;
   border-top-color: rgba(100 170 255 / 0.50);
   opacity: 0;
   transition: opacity 0.2s ease;
@@ -1121,7 +1121,7 @@ button:disabled { cursor: default; }
   content: "";
   position: absolute;
   top: 31px;
-  left: -21px;
+  left: -25px;
   width: 10px;
   height: 10px;
   border-radius: 50%;
@@ -1134,14 +1134,6 @@ button:disabled { cursor: default; }
 .segment-row.is-selected-row .segment-sidecar::before,
 .segment-row.is-selected-row .segment-sidecar::after {
   opacity: 1;
-}
-
-/* Semicircle notch on the card's right edge — sits where the connector dot lands */
-.segment-row.has-sidecar > .segment-card {
-  -webkit-mask-image:
-    radial-gradient(circle 9px at 100% 36px, transparent 9px, black 9px);
-  mask-image:
-    radial-gradient(circle 9px at 100% 36px, transparent 9px, black 9px);
 }
 
 .comment-card {
@@ -1408,31 +1400,34 @@ button:disabled { cursor: default; }
 }
 
 .transcript-stage {
-  --segment-width: 800px;
-  --sidecar-width: 240px;
-  width: min(calc(100% - 64px), 1320px);
+  --sidecar-width: 260px;
+  width: min(calc(100% - 64px), 1060px);
   gap: 7px;
 }
 
-/* 3-column symmetric grid: [mirror] [card] [sidecar]
-   The card always stays in column 2 — no layout shift when a comment opens. */
+/* Left-anchored layout:
+   - No comment: card fills the full stage width
+   - With comment: card shrinks, comment appears to the right */
 .segment-row,
-.segment-row:not(.has-sidecar),
+.segment-row:not(.has-sidecar) {
+  display: grid;
+  grid-template-columns: 1fr;
+}
+
 .segment-row.has-sidecar {
   display: grid;
-  grid-template-columns: var(--sidecar-width) minmax(0, var(--segment-width)) var(--sidecar-width);
-  gap: 16px;
-  justify-content: center;
+  grid-template-columns: 1fr var(--sidecar-width);
+  gap: 20px;
 }
 
 .segment-row > .segment-card {
-  grid-column: 2;
+  grid-column: 1;
   min-width: 0;
   width: 100%;
 }
 
 .segment-row > .segment-sidecar {
-  grid-column: 3;
+  grid-column: 2;
 }
 
 .segment-card {
@@ -1514,17 +1509,13 @@ button:disabled { cursor: default; }
     width: min(calc(100% - 28px), 760px);
   }
 
-  .segment-row.has-sidecar,
-  .segment-row:not(.has-sidecar) {
-    display: flex;
-    flex-direction: column;
-    align-items: stretch;
+  .segment-row.has-sidecar {
+    grid-template-columns: 1fr;
     gap: 8px;
   }
 
-  .segment-row > .segment-card,
   .segment-row > .segment-sidecar {
-    grid-column: unset;
+    grid-column: 1;
     width: 100%;
   }
 }
