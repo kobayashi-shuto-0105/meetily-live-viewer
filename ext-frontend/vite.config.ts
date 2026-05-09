@@ -32,7 +32,10 @@ export default defineConfig(({ mode }) => {
                 changeOrigin: true,
               },
               "/ws": {
-                target: backendBase.replace("http", "ws"),
+                // IMPORTANT: target must use http:// (not ws://) even for WS
+                // proxying. Vite's http-proxy upgrades the protocol internally
+                // when ws:true is set.
+                target: backendBase,
                 ws: true,
                 changeOrigin: true,
               },
