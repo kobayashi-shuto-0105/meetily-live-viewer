@@ -211,7 +211,7 @@ export function TranscriptEditor({
             marginRight: "auto",
           }}
         >
-          Ctrl+Enter で保存 / Esc でキャンセル
+          Ctrl/Cmd+Enter で保存 / Esc でキャンセル
         </span>
 
         {/* キャンセルボタン */}

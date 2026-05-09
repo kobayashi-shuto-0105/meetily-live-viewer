@@ -304,7 +304,7 @@ export function CommentPanel({
             marginRight: "auto",
           }}
         >
-          Ctrl+Enter で送信
+          Ctrl/Cmd+Enter で送信
         </span>
 
         {/* 送信ボタン */}
