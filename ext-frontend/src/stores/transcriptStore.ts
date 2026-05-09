@@ -24,11 +24,8 @@ interface TranscriptState {
   /** ID of the segment currently focused by the user (click-to-select) */
   selectedSegmentId: string | null;
 
-  /**
-   * Incremented whenever the user presses ⌘+Enter on a selected segment.
-   * The bottom comment input watches this value and auto-focuses.
-   */
-  commentInputTrigger: number;
+  /** Segment currently showing the side comment composer. */
+  commentInputSegmentId: string | null;
 
   // --- actions ---
   setConnectionStatus: (status: ConnectionStatus) => void;
@@ -47,7 +44,8 @@ interface TranscriptState {
   clearSegments: () => void;
 
   setSelectedSegmentId: (id: string | null) => void;
-  triggerCommentInput: () => void;
+  openCommentInput: (id: string) => void;
+  closeCommentInput: () => void;
 }
 
 // ----------------------------------------------------------------
@@ -72,7 +70,7 @@ export const useTranscriptStore = create<TranscriptState>((set) => ({
   segments: new Map(),
   sortedSegments: [],
   selectedSegmentId: null,
-  commentInputTrigger: 0,
+  commentInputSegmentId: null,
 
   setConnectionStatus: (status) => set({ connectionStatus: status }),
 
@@ -82,6 +80,7 @@ export const useTranscriptStore = create<TranscriptState>((set) => ({
       segments: new Map(),
       sortedSegments: [],
       selectedSegmentId: null,
+      commentInputSegmentId: null,
     }),
 
   stopSession: () =>
@@ -235,12 +234,21 @@ export const useTranscriptStore = create<TranscriptState>((set) => ({
       return { segments: newSegments, sortedSegments: toSortedArray(newSegments) };
     }),
 
-  clearSegments: () => set({ segments: new Map(), sortedSegments: [], selectedSegmentId: null }),
+  clearSegments: () =>
+    set({
+      segments: new Map(),
+      sortedSegments: [],
+      selectedSegmentId: null,
+      commentInputSegmentId: null,
+    }),
 
-  setSelectedSegmentId: (id) => set({ selectedSegmentId: id }),
+  setSelectedSegmentId: (id) =>
+    set({ selectedSegmentId: id, commentInputSegmentId: null }),
 
-  triggerCommentInput: () =>
-    set((state) => ({ commentInputTrigger: state.commentInputTrigger + 1 })),
+  openCommentInput: (id) =>
+    set({ selectedSegmentId: id, commentInputSegmentId: id }),
+
+  closeCommentInput: () => set({ commentInputSegmentId: null }),
 }));
 
 // ----------------------------------------------------------------

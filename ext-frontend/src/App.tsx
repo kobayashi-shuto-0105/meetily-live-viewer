@@ -4,7 +4,6 @@ import type { WebSocketClient } from "./api/ws";
 import { apiClient } from "./api/client";
 import { useTranscriptStore } from "./stores/transcriptStore";
 import { TranscriptViewer } from "./components/TranscriptViewer";
-import type { SessionInfo } from "./types";
 
 // ----------------------------------------------------------------
 // Theme helpers
@@ -26,7 +25,7 @@ function applyTheme(theme: Theme) {
 // ----------------------------------------------------------------
 
 function App() {
-  const [theme, setTheme] = useState<Theme>(loadTheme);
+  const [theme] = useState<Theme>(loadTheme);
 
   const wsRef = useRef<WebSocketClient | null>(null);
 
@@ -131,75 +130,33 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const toggleTheme = () =>
-    setTheme((t) => (t === "dark" ? "light" : "dark"));
-
-  const title = session?.meetingTitle ?? "Meetily";
+  const title = session?.meetingTitle?.trim() ?? "";
 
   return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        height: "100vh",
-        background: "var(--bg-app)",
-        color: "var(--text-1)",
-      }}
-    >
-      {/* ── Header ─────────────────────────────────────────── */}
-      <header
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: "0.75rem",
-          padding: "0 1.25rem",
-          height: "52px",
-          background: "var(--bg-surface)",
-          borderBottom: "1px solid var(--border-subtle)",
-          flexShrink: 0,
-        }}
-      >
-        {/* Recording indicator dot */}
-        <RecordingDot session={session} />
+    <div className="meetily-app">
+      <div className="app-frame">
+        <WindowControls />
+        <header className="app-header">
+          <div className="brand-corner" aria-label="Meetily">
+            <img
+              className="brand-icon brand-icon-dark"
+              src="/assets/Meetily_icon_white.png"
+              alt=""
+            />
+            <img
+              className="brand-icon brand-icon-light"
+              src="/assets/Meetily_icon_black.png"
+              alt=""
+            />
+          </div>
 
-        {/* Meeting title */}
-        <span
-          style={{
-            fontWeight: 600,
-            fontSize: "0.95rem",
-            color: "var(--text-1)",
-            flex: 1,
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-          }}
-        >
-          {title}
-        </span>
+          {title && <h1 className="meeting-title">{title}</h1>}
+          <CommandBar />
+          <ConnectionBadge />
+        </header>
 
-        {/* Connection status badge */}
-        <ConnectionBadge />
-
-        {/* Theme toggle */}
-        <button
-          onClick={toggleTheme}
-          title={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}
-          style={{
-            background: "none",
-            border: "1px solid var(--border)",
-            borderRadius: "6px",
-            color: "var(--text-2)",
-            padding: "0.3rem 0.5rem",
-            fontSize: "0.8rem",
-            lineHeight: 1,
-          }}
-        >
-          {theme === "dark" ? "☀" : "☾"}
-        </button>
-      </header>
-
-      {/* ── Main content ────────────────────────────────────── */}
-      <TranscriptViewer />
+        <TranscriptViewer />
+      </div>
     </div>
   );
 }
@@ -208,20 +165,29 @@ function App() {
 // Sub-components
 // ----------------------------------------------------------------
 
-function RecordingDot({ session }: { session: SessionInfo | null }) {
-  if (!session) return null;
-  const isRecording = !session.isStopped;
+function WindowControls() {
   return (
-    <span
-      style={{
-        width: "8px",
-        height: "8px",
-        borderRadius: "50%",
-        flexShrink: 0,
-        background: isRecording ? "var(--err)" : "var(--text-3)",
-        animation: isRecording ? "pulse 1.5s ease-in-out infinite" : undefined,
-      }}
-    />
+    <div className="window-controls" aria-hidden="true">
+      <span className="window-dot window-dot-red" />
+      <span className="window-dot window-dot-yellow" />
+      <span className="window-dot window-dot-green" />
+    </div>
+  );
+}
+
+function CommandBar() {
+  return (
+    <div className="command-bar" aria-label="Command entry">
+      <span className="command-search" aria-hidden="true" />
+      <span className="command-placeholder">コメントを追加 / コマンドを入力</span>
+      <span className="command-kbd">⌘ + K</span>
+      <button className="command-submit" type="button" aria-label="Submit command">
+        ↑
+      </button>
+      <div className="command-help" aria-hidden="true">
+        Enter: 編集モード <span>|</span> ↑ ↓: 移動 <span>|</span> F: FIXME <span>|</span> ⌘ + Enter: コメント
+      </div>
+    </div>
   );
 }
 
@@ -239,20 +205,12 @@ function ConnectionBadge() {
 
   return (
     <span
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: "0.35rem",
-        fontSize: "0.75rem",
-        color,
-        fontWeight: 500,
-      }}
+      className="connection-badge"
+      style={{ color }}
     >
       <span
+        className="connection-dot"
         style={{
-          width: "6px",
-          height: "6px",
-          borderRadius: "50%",
           background: color,
           animation: status === "connecting" ? "pulse 1.2s ease-in-out infinite" : undefined,
         }}

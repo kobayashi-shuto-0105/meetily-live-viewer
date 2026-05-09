@@ -1,4 +1,5 @@
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { KeyboardEvent, MouseEvent, ReactNode } from "react";
 import type { TranscriptSegmentView } from "../types";
 import { useTranscriptStore } from "../stores/transcriptStore";
 import { apiClient } from "../api/client";
@@ -26,48 +27,51 @@ interface Props {
 
 export function TranscriptSegment({ segment }: Props) {
   const selectedSegmentId = useTranscriptStore((s) => s.selectedSegmentId);
+  const commentInputSegmentId = useTranscriptStore((s) => s.commentInputSegmentId);
   const setSelectedSegmentId = useTranscriptStore((s) => s.setSelectedSegmentId);
-  const triggerCommentInput = useTranscriptStore((s) => s.triggerCommentInput);
+  const openCommentInput = useTranscriptStore((s) => s.openCommentInput);
 
   const isSelected = selectedSegmentId === segment.id;
+  const isCommenting = commentInputSegmentId === segment.id;
 
   const [isEditing, setIsEditing] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [highlightLoading, setHighlightLoading] = useState<"todo" | "fixme" | null>(null);
 
-  const divRef = useRef<HTMLDivElement>(null);
+  const cardRef = useRef<HTMLElement>(null);
 
-  // When selected, show history
-  useEffect(() => {
-    if (!isSelected) {
-      setIsEditing(false);
-      setShowHistory(false);
-    }
-  }, [isSelected]);
+  const shouldShowEditor = isSelected && isEditing;
+  const shouldShowHistory = isSelected && showHistory;
 
-  // Focus div when it becomes selected (enables keyboard events)
   useEffect(() => {
-    if (isSelected && !isEditing) {
-      divRef.current?.focus();
+    if (isSelected && !shouldShowEditor && !isCommenting) {
+      cardRef.current?.focus();
     }
-  }, [isSelected, isEditing]);
+  }, [isSelected, shouldShowEditor, isCommenting]);
 
   const handleClick = useCallback(
-    (e: React.MouseEvent) => {
+    (e: MouseEvent) => {
       e.stopPropagation();
+      if (!isSelected) {
+        setIsEditing(false);
+        setShowHistory(false);
+      }
       setSelectedSegmentId(segment.id);
     },
-    [segment.id, setSelectedSegmentId]
+    [isSelected, segment.id, setSelectedSegmentId]
   );
 
   const addHighlight = useCallback(
     async (kind: "todo" | "fixme") => {
       if (highlightLoading) return;
-      // Don't add if already exists
       const existing = segment.highlights.find(
-        (h) => h.color === kind || (kind === "todo" && h.color === "yellow") || (kind === "fixme" && h.color === "red")
+        (h) =>
+          h.color === kind ||
+          (kind === "todo" && h.color === "yellow") ||
+          (kind === "fixme" && h.color === "red")
       );
       if (existing) return;
+
       setHighlightLoading(kind);
       try {
         await apiClient.createHighlight(segment.id, { color: kind });
@@ -79,8 +83,7 @@ export function TranscriptSegment({ segment }: Props) {
   );
 
   const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent<HTMLDivElement>) => {
-      // Only handle when the segment div itself (not a child) has focus
+    (e: KeyboardEvent<HTMLElement>) => {
       if (["INPUT", "TEXTAREA"].includes((e.target as HTMLElement).tagName)) return;
 
       if (e.key === "Enter" && !e.metaKey && !e.ctrlKey) {
@@ -91,7 +94,7 @@ export function TranscriptSegment({ segment }: Props) {
 
       if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
-        triggerCommentInput();
+        openCommentInput(segment.id);
         return;
       }
 
@@ -110,157 +113,191 @@ export function TranscriptSegment({ segment }: Props) {
       if (e.key === "Escape") {
         e.preventDefault();
         setSelectedSegmentId(null);
-        return;
       }
     },
-    [addHighlight, setSelectedSegmentId, triggerCommentInput]
+    [addHighlight, openCommentInput, segment.id, setSelectedSegmentId]
   );
 
   const highlightKind = getHighlightKind(segment.highlights);
   const commentCount = segment.comments.length;
   const hasRevision = segment.revisions.length > 0;
-
-  const leftBorderColor =
-    highlightKind === "fixme"
-      ? "var(--fixme-color)"
-      : highlightKind === "todo"
-      ? "var(--todo-color)"
-      : isSelected
-      ? "var(--accent)"
-      : "transparent";
+  const hasSidecar = isSelected && (isCommenting || commentCount > 0);
 
   return (
-    <div
-      ref={divRef}
-      tabIndex={0}
-      onClick={handleClick}
-      onKeyDown={handleKeyDown}
-      style={{
-        position: "relative",
-        padding: "0.65rem 1.25rem 0.65rem 1.05rem",
-        cursor: "pointer",
-        outline: "none",
-        borderLeft: `3px solid ${leftBorderColor}`,
-        background: isSelected ? "var(--bg-selected)" : "transparent",
-        transition: "background 0.12s, border-left-color 0.12s",
-        animation: "fadeIn 0.15s ease",
-      }}
-      onMouseEnter={(e) => {
-        if (!isSelected)
-          (e.currentTarget as HTMLDivElement).style.background = "var(--bg-hover)";
-      }}
-      onMouseLeave={(e) => {
-        if (!isSelected)
-          (e.currentTarget as HTMLDivElement).style.background = "transparent";
-      }}
-    >
-      {/* ── Highlight badges ─────────────────────────────── */}
-      {highlightKind && (
-        <div
-          style={{
-            display: "flex",
-            gap: "0.35rem",
-            marginBottom: "0.35rem",
-          }}
-        >
-          {highlightKind === "todo" && <Badge color="var(--todo-color)" bg="var(--todo-bg)">TODO</Badge>}
-          {highlightKind === "fixme" && <Badge color="var(--fixme-color)" bg="var(--fixme-bg)">FIXME</Badge>}
-        </div>
-      )}
-
-      {/* ── Main text ──────────────────────────────────── */}
-      {isEditing ? (
-        <TranscriptEditor
-          segmentId={segment.id}
-          currentText={segment.displayText}
-          onClose={() => {
-            setIsEditing(false);
-            divRef.current?.focus();
-          }}
-        />
-      ) : (
-        <p
-          style={{
-            margin: 0,
-            lineHeight: 1.65,
-            color: segment.isPartial ? "var(--text-3)" : "var(--text-1)",
-            fontStyle: segment.isPartial ? "italic" : undefined,
-            fontSize: "0.9rem",
-          }}
-        >
-          {segment.displayText}
-          {segment.isPartial && (
-            <span style={{ color: "var(--warn)", marginLeft: "0.4rem", fontSize: "0.75rem" }}>
-              (recognizing…)
-            </span>
-          )}
-        </p>
-      )}
-
-      {/* ── Metadata row (icons only, shown when segment has data) ── */}
-      {!isEditing && (commentCount > 0 || hasRevision) && (
-        <div
-          style={{
-            display: "flex",
-            gap: "0.6rem",
-            marginTop: "0.35rem",
-            fontSize: "0.72rem",
-            color: "var(--text-3)",
-          }}
-        >
-          {commentCount > 0 && (
-            <span title={`${commentCount} comment${commentCount > 1 ? "s" : ""}`}>
-              💬 {commentCount}
-            </span>
-          )}
-          {hasRevision && (
-            <span title={`${segment.revisions.length} edit${segment.revisions.length > 1 ? "s" : ""}`}>
-              ✏ v{segment.revisions.length}
-            </span>
-          )}
-        </div>
-      )}
-
-      {/* ── Selected: keyboard hint + edit history ─────────── */}
-      {isSelected && !isEditing && (
-        <>
-          <div
-            style={{
-              display: "flex",
-              gap: "0.75rem",
-              flexWrap: "wrap",
-              marginTop: "0.45rem",
-              fontSize: "0.72rem",
-              color: "var(--text-3)",
+    <div className={`segment-row ${hasSidecar ? "has-sidecar" : ""}`}>
+      <article
+        ref={cardRef}
+        tabIndex={0}
+        onClick={handleClick}
+        onKeyDown={handleKeyDown}
+        className={[
+          "segment-card",
+          isSelected ? "is-selected" : "",
+          highlightKind ? `has-${highlightKind}` : "",
+        ].join(" ")}
+      >
+        {shouldShowEditor ? (
+          <TranscriptEditor
+            segmentId={segment.id}
+            currentText={segment.displayText}
+            onClose={() => {
+              setIsEditing(false);
+              cardRef.current?.focus();
             }}
-          >
-            <ShortcutHint keys="Enter" label="Edit" />
-            <ShortcutHint keys="T" label="TODO" loading={highlightLoading === "todo"} />
-            <ShortcutHint keys="F" label="FIXME" loading={highlightLoading === "fixme"} />
-            <ShortcutHint keys="⌘ Enter" label="Comment" />
-            {hasRevision && (
-              <button
-                onClick={(e) => { e.stopPropagation(); setShowHistory((v) => !v); }}
-                style={{
-                  background: "none",
-                  border: "none",
-                  padding: 0,
-                  color: "var(--accent)",
-                  fontSize: "0.72rem",
-                  cursor: "pointer",
-                  textDecoration: "underline",
-                }}
-              >
-                {showHistory ? "Hide history" : "Edit history"}
-              </button>
-            )}
-          </div>
+          />
+        ) : (
+          <>
+            <div className="segment-main-line">
+              {highlightKind === "todo" && <Badge tone="todo">TODO</Badge>}
+              {highlightKind === "fixme" && <Badge tone="fixme">FIXME</Badge>}
+              <p className={`segment-text ${segment.isPartial ? "is-partial" : ""}`}>
+                {segment.displayText}
+                {segment.isPartial && <span className="partial-label">recognizing...</span>}
+              </p>
+            </div>
 
-          {showHistory && hasRevision && (
-            <EditHistory segment={segment} />
-          )}
-        </>
+            {(commentCount > 0 || hasRevision) && (
+              <div className="segment-meta">
+                {commentCount > 0 && (
+                  <span>{commentCount} comment{commentCount > 1 ? "s" : ""}</span>
+                )}
+                {hasRevision && <span>v{segment.revisions.length}</span>}
+              </div>
+            )}
+
+            {isSelected && (
+              <div className="segment-shortcuts">
+                <ShortcutHint keys="Enter" label="Edit" />
+                <ShortcutHint keys="T" label="TODO" loading={highlightLoading === "todo"} />
+                <ShortcutHint keys="F" label="FIXME" loading={highlightLoading === "fixme"} />
+                <ShortcutHint keys="⌘ Enter" label="Comment" />
+                {hasRevision && (
+                  <button
+                    className="history-toggle"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setShowHistory((v) => !v);
+                    }}
+                  >
+                    {showHistory ? "Hide history" : "Edit history"}
+                  </button>
+                )}
+              </div>
+            )}
+
+            {shouldShowHistory && hasRevision && <EditHistory segment={segment} />}
+          </>
+        )}
+      </article>
+
+      {hasSidecar && (
+        <SegmentSidecar segment={segment} isCommenting={isCommenting} />
       )}
+    </div>
+  );
+}
+
+// ----------------------------------------------------------------
+// Segment side comment card
+// ----------------------------------------------------------------
+
+function SegmentSidecar({
+  segment,
+  isCommenting,
+}: {
+  segment: TranscriptSegmentView;
+  isCommenting: boolean;
+}) {
+  return (
+    <aside className="segment-sidecar" onClick={(e) => e.stopPropagation()}>
+      {isCommenting && <CommentComposer segmentId={segment.id} />}
+      {segment.comments.length > 0 && <SegmentComments segment={segment} />}
+    </aside>
+  );
+}
+
+function CommentComposer({ segmentId }: { segmentId: string }) {
+  const closeCommentInput = useTranscriptStore((s) => s.closeCommentInput);
+  const [text, setText] = useState("");
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
+
+  const submit = useCallback(async () => {
+    const trimmed = text.trim();
+    if (!trimmed || sending) return;
+
+    setSending(true);
+    setError(null);
+    try {
+      await apiClient.createComment(segmentId, { commentText: trimmed });
+      setText("");
+      closeCommentInput();
+    } catch {
+      setError("Failed to send. Please try again.");
+    } finally {
+      setSending(false);
+    }
+  }, [closeCommentInput, segmentId, sending, text]);
+
+  const handleKeyDown = useCallback(
+    (e: KeyboardEvent<HTMLTextAreaElement>) => {
+      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        submit();
+        return;
+      }
+
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setText("");
+        closeCommentInput();
+      }
+    },
+    [closeCommentInput, submit]
+  );
+
+  return (
+    <div className="comment-card comment-composer">
+      <div className="comment-card-title">Comment</div>
+      <textarea
+        ref={inputRef}
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={handleKeyDown}
+        disabled={sending}
+        rows={4}
+        placeholder="Add comment..."
+      />
+      {error && <div className="comment-error">{error}</div>}
+      <div className="comment-actions">
+        <span>⌘ Enter to send</span>
+        <button type="button" onClick={closeCommentInput} disabled={sending}>
+          Cancel
+        </button>
+        <button type="button" onClick={submit} disabled={!text.trim() || sending}>
+          {sending ? "Sending..." : "Send"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function SegmentComments({ segment }: { segment: TranscriptSegmentView }) {
+  return (
+    <div className="comment-card comment-thread">
+      <div className="comment-card-title">Comments</div>
+      <div className="comment-list">
+        {segment.comments.map((comment) => (
+          <div className="comment-item" key={comment.id}>
+            {comment.comment_text}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -273,58 +310,20 @@ function EditHistory({ segment }: { segment: TranscriptSegmentView }) {
   const sorted = [...segment.revisions].sort((a, b) => a.version - b.version);
 
   return (
-    <div
-      style={{
-        marginTop: "0.5rem",
-        padding: "0.5rem 0.6rem",
-        background: "var(--bg-surface2)",
-        borderRadius: "6px",
-        fontSize: "0.78rem",
-        animation: "fadeIn 0.12s ease",
-      }}
-    >
-      <div
-        style={{
-          fontWeight: 600,
-          color: "var(--text-2)",
-          marginBottom: "0.35rem",
-          fontSize: "0.72rem",
-          letterSpacing: "0.04em",
-          textTransform: "uppercase",
-        }}
-      >
-        Edit History
+    <div className="edit-history">
+      <div className="edit-history-title">Edit History</div>
+      <div className="edit-history-row is-muted">
+        <span>v0</span>
+        <del>{segment.rawText}</del>
       </div>
 
-      {/* Original */}
-      <div style={{ marginBottom: "0.25rem", color: "var(--text-3)" }}>
-        <span style={{ fontFamily: "monospace", marginRight: "0.4rem" }}>v0</span>
-        <span style={{ textDecoration: "line-through" }}>{segment.rawText}</span>
-      </div>
-
-      {sorted.map((r, i) => (
+      {sorted.map((revision, index) => (
         <div
-          key={r.id}
-          style={{
-            color: i === sorted.length - 1 ? "var(--text-1)" : "var(--text-3)",
-            marginBottom: "0.2rem",
-          }}
+          key={revision.id}
+          className={`edit-history-row ${index === sorted.length - 1 ? "is-current" : ""}`}
         >
-          <span style={{ fontFamily: "monospace", marginRight: "0.4rem" }}>
-            v{r.version}
-          </span>
-          {r.edited_text}
-          {i === sorted.length - 1 && (
-            <span
-              style={{
-                marginLeft: "0.4rem",
-                fontSize: "0.68rem",
-                color: "var(--ok)",
-              }}
-            >
-              (current)
-            </span>
-          )}
+          <span>v{revision.version}</span>
+          <span>{revision.edited_text}</span>
         </div>
       ))}
     </div>
@@ -336,30 +335,13 @@ function EditHistory({ segment }: { segment: TranscriptSegmentView }) {
 // ----------------------------------------------------------------
 
 function Badge({
-  color,
-  bg,
+  tone,
   children,
 }: {
-  color: string;
-  bg: string;
-  children: React.ReactNode;
+  tone: "todo" | "fixme";
+  children: ReactNode;
 }) {
-  return (
-    <span
-      style={{
-        display: "inline-block",
-        padding: "0.1rem 0.45rem",
-        borderRadius: "4px",
-        fontSize: "0.68rem",
-        fontWeight: 700,
-        letterSpacing: "0.06em",
-        color,
-        background: bg,
-      }}
-    >
-      {children}
-    </span>
-  );
+  return <span className={`segment-badge segment-badge-${tone}`}>{children}</span>;
 }
 
 function ShortcutHint({
@@ -372,24 +354,9 @@ function ShortcutHint({
   loading?: boolean;
 }) {
   return (
-    <span>
-      <kbd
-        style={{
-          background: "var(--bg-surface)",
-          border: "1px solid var(--border)",
-          borderRadius: "3px",
-          padding: "0.05rem 0.3rem",
-          fontFamily: "monospace",
-          fontSize: "0.68rem",
-          color: "var(--text-2)",
-          marginRight: "0.2rem",
-        }}
-      >
-        {keys}
-      </kbd>
-      <span style={{ color: loading ? "var(--warn)" : "var(--text-3)" }}>
-        {loading ? "…" : label}
-      </span>
+    <span className="shortcut-hint">
+      <kbd>{keys}</kbd>
+      <span>{loading ? "..." : label}</span>
     </span>
   );
 }
