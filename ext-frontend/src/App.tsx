@@ -54,12 +54,18 @@ function App() {
     async function initialLoad() {
       try {
         const current = await apiClient.getCurrentSession();
-        if (!current) return;
+        if (!current) {
+          console.log("[initialLoad] No active session found.");
+          return;
+        }
+        console.log("[initialLoad] Restoring session:", current.session_id);
         restoreSession(current.session_id, current.meeting_title, current.started_at);
         const segments = await apiClient.getSessionTranscripts(current.session_id);
+        console.log("[initialLoad] Loaded segments:", segments.length);
         loadSegments(segments);
-      } catch {
-        // Server may not be running yet — WebSocket will handle live data
+      } catch (e) {
+        // Log so the error is visible in DevTools — not a fatal failure
+        console.warn("[initialLoad] Failed to restore session from REST API:", e);
       }
     }
     initialLoad();

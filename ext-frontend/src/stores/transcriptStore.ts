@@ -202,13 +202,14 @@ export const useTranscriptStore = create<TranscriptState>((set) => ({
           audioStartTime: res.audio_start_time ?? 0,
           audioEndTime: res.audio_end_time ?? 0,
           duration: res.duration ?? 0,
-          revisions: res.revisions.map((r) => ({
+          // Guard against missing fields — server may omit revisions
+          revisions: (res.revisions ?? []).map((r) => ({
             id: r.id,
             external_segment_id: r.external_segment_id,
             edited_text: r.edited_text,
             version: r.version,
           })),
-          comments: res.comments.map((c) => ({
+          comments: (res.comments ?? []).map((c) => ({
             id: c.id,
             external_segment_id: c.external_segment_id,
             comment_text: c.comment_text,
@@ -217,7 +218,7 @@ export const useTranscriptStore = create<TranscriptState>((set) => ({
             anchor_end: c.anchor_end,
             anchor_revision_id: c.anchor_revision_id,
           })),
-          highlights: res.highlights.map((h) => ({
+          highlights: (res.highlights ?? []).map((h) => ({
             id: h.id,
             external_segment_id: h.external_segment_id,
             color: h.color,

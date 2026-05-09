@@ -152,25 +152,31 @@ export class ApiClient {
   /**
    * 指定セッション ID の全セグメントを取得する。
    * リアルタイム録音中でも録音後でも使用可能。
+   *
+   * Server returns { session_id, segments: [...] } — unwrap the array here.
    */
   async getSessionTranscripts(
     sessionId: string
   ): Promise<TranscriptSegmentResponse[]> {
-    return this.request<TranscriptSegmentResponse[]>(
+    const res = await this.request<{ session_id: string; segments: TranscriptSegmentResponse[] }>(
       `/api/sessions/${encodeURIComponent(sessionId)}/transcripts`
     );
+    return res.segments ?? [];
   }
 
   /**
    * 保存済み会議の文字起こし + overlay を取得する。
    * meeting_id が確定した後に使用する。
+   *
+   * Server returns { meeting_id, segments: [...] } — unwrap the array here.
    */
   async getMeetingTranscripts(
     meetingId: string
   ): Promise<TranscriptSegmentResponse[]> {
-    return this.request<TranscriptSegmentResponse[]>(
+    const res = await this.request<{ meeting_id: string; segments: TranscriptSegmentResponse[] }>(
       `/api/meetings/${encodeURIComponent(meetingId)}/transcripts`
     );
+    return res.segments ?? [];
   }
 
   // -------------------------------------------------------------------------
