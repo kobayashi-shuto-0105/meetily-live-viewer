@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createWebSocketClient } from "./api/ws";
 import type { WebSocketClient } from "./api/ws";
 import { apiClient } from "./api/client";
@@ -136,8 +136,49 @@ function App() {
 
   const title = session?.meetingTitle?.trim() ?? "";
 
+  // ---- Command bar visibility (⌘P or top-center hover) ----
+  const [cmdBarVisible, setCmdBarVisible] = useState(false);
+  const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const showBar = useCallback(() => {
+    if (hideTimerRef.current) {
+      clearTimeout(hideTimerRef.current);
+      hideTimerRef.current = null;
+    }
+    setCmdBarVisible(true);
+  }, []);
+
+  const scheduleHide = useCallback(() => {
+    hideTimerRef.current = setTimeout(() => setCmdBarVisible(false), 320);
+  }, []);
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "p") {
+        e.preventDefault();
+        if (hideTimerRef.current) {
+          clearTimeout(hideTimerRef.current);
+          hideTimerRef.current = null;
+        }
+        setCmdBarVisible((v) => !v);
+      }
+      if (e.key === "Escape") {
+        setCmdBarVisible(false);
+      }
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, []);
+
   return (
     <div className="meetily-app">
+      {/* Invisible hover trigger at top-center */}
+      <div
+        className="cmd-hotzone"
+        onMouseEnter={showBar}
+        onMouseLeave={scheduleHide}
+      />
+
       <div className="app-frame">
         <header className="app-header">
           <div className="brand-corner" aria-label="Meetily">
@@ -154,7 +195,11 @@ function App() {
           </div>
 
           {title && <h1 className="meeting-title">{title}</h1>}
-          <CommandBar />
+          <CommandBar
+            visible={cmdBarVisible}
+            onMouseEnter={showBar}
+            onMouseLeave={scheduleHide}
+          />
           <ConnectionBadge />
         </header>
 
@@ -168,17 +213,30 @@ function App() {
 // Sub-components
 // ----------------------------------------------------------------
 
-function CommandBar() {
+function CommandBar({
+  visible,
+  onMouseEnter,
+  onMouseLeave,
+}: {
+  visible: boolean;
+  onMouseEnter: () => void;
+  onMouseLeave: () => void;
+}) {
   return (
-    <div className="command-bar" aria-label="Command entry">
+    <div
+      className={`command-bar${visible ? " is-visible" : ""}`}
+      aria-label="Command entry"
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
+    >
       <span className="command-search" aria-hidden="true" />
       <span className="command-placeholder">コメントを追加 / コマンドを入力</span>
-      <span className="command-kbd">⌘ + K</span>
+      <span className="command-kbd">⌘ P</span>
       <button className="command-submit" type="button" aria-label="Submit command">
         ↑
       </button>
       <div className="command-help" aria-hidden="true">
-        Enter: 編集モード <span>|</span> ↑ ↓: 移動 <span>|</span> F: FIXME <span>|</span> ⌘ + Enter: コメント
+        T: TODO <span>|</span> F: FIXME <span>|</span> ⌘ Enter: コメント <span>|</span> Esc: 閉じる
       </div>
     </div>
   );

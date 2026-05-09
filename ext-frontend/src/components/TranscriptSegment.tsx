@@ -124,10 +124,11 @@ export function TranscriptSegment({ segment }: Props) {
   const highlightKind = getHighlightKind(segment.highlights);
   const commentCount = segment.comments.length;
   const hasRevision = segment.revisions.length > 0;
-  const hasSidecar = isSelected && (isCommenting || commentCount > 0);
+  // Always show sidecar when there are comments (not just when selected)
+  const hasSidecar = isCommenting || commentCount > 0;
 
   return (
-    <div className={`segment-row ${hasSidecar ? "has-sidecar" : ""}`}>
+    <div className={`segment-row ${hasSidecar ? "has-sidecar" : ""} ${isSelected ? "is-selected-row" : ""}`}>
       <article
         ref={cardRef}
         tabIndex={0}

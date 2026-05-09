@@ -16,18 +16,18 @@
   --border-subtle: rgba(255 255 255 / 0.08);
   --border:        rgba(255 255 255 / 0.14);
 
-  --text-1: #eef3ff;
-  --text-2: #a3acc4;
-  --text-3: #68728d;
+  --text-1: rgba(255 255 255 / 0.92);
+  --text-2: rgba(255 255 255 / 0.56);
+  --text-3: rgba(255 255 255 / 0.36);
 
   --accent:     #5d9cff;
   --accent-alt: #7bb7ff;
   --accent-dim: rgba(93 156 255 / 0.16);
 
-  --todo-color: #f59e0b;
-  --todo-bg:    rgba(245 158 11 / 0.10);
-  --fixme-color: #ef4444;
-  --fixme-bg:   rgba(239 68 68 / 0.10);
+  --todo-color: #f8d675;
+  --todo-bg:    rgba(255 190 60 / 0.12);
+  --fixme-color: #ff9b9b;
+  --fixme-bg:   rgba(255 90 90 / 0.12);
 
   --ok:   #10b981;
   --warn: #f59e0b;
@@ -81,7 +81,7 @@ html, body, #root {
 
 body {
   margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Hiragino Sans", "Noto Sans JP", system-ui, sans-serif;
   font-size: 14px;
   line-height: 1.5;
   background: var(--bg-app);
@@ -345,19 +345,18 @@ button:disabled { cursor: default; }
 .segment-card::before {
   content: "";
   position: absolute;
-  inset: 0 auto 0 0;
+  inset: 14px auto 14px 0;
   width: 3px;
+  border-radius: 999px;
   background: transparent;
 }
 
 .segment-card.has-todo::before {
-  background: var(--todo-color);
-  box-shadow: 0 0 18px rgba(245 158 11 / 0.58);
+  background: linear-gradient(180deg, rgba(255 216 100 / 0.88), rgba(255 158 30 / 0.50));
 }
 
 .segment-card.has-fixme::before {
-  background: var(--fixme-color);
-  box-shadow: 0 0 18px rgba(239 68 68 / 0.52);
+  background: linear-gradient(180deg, rgba(255 152 152 / 0.88), rgba(255 80 80 / 0.48));
 }
 
 .segment-main-line {
@@ -413,15 +412,11 @@ button:disabled { cursor: default; }
   border: 1px solid rgba(239 68 68 / 0.30);
 }
 
-.segment-meta,
-.segment-shortcuts {
+.segment-meta {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 10px;
-}
-
-.segment-meta {
   margin-top: 9px;
   color: var(--text-3);
   font-size: 0.76rem;
@@ -429,15 +424,33 @@ button:disabled { cursor: default; }
 }
 
 .segment-shortcuts {
-  width: fit-content;
-  max-width: 100%;
-  margin: 12px 0 0 auto;
-  padding: 8px 10px;
-  border: 1px solid var(--border-subtle);
-  border-radius: 8px;
-  background: rgba(255 255 255 / 0.065);
+  position: absolute;
+  bottom: 10px;
+  right: 12px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-width: calc(100% - 24px);
+  padding: 6px 9px;
+  border: 1px solid rgba(255 255 255 / 0.11);
+  border-radius: 10px;
+  background: rgba(6 11 22 / 0.58);
+  backdrop-filter: blur(18px) saturate(1.3);
+  -webkit-backdrop-filter: blur(18px) saturate(1.3);
   color: var(--text-3);
-  font-size: 0.72rem;
+  font-size: 0.70rem;
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity 150ms ease, transform 150ms ease;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.segment-card.is-selected:hover .segment-shortcuts {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
 }
 
 .shortcut-hint {
@@ -453,13 +466,13 @@ button:disabled { cursor: default; }
 }
 
 .shortcut-hint kbd {
-  min-height: 18px;
+  min-height: 17px;
   padding: 2px 5px;
-  border: 1px solid var(--border);
+  border: 1px solid rgba(255 255 255 / 0.14);
   border-radius: 5px;
-  background: rgba(0 0 0 / 0.18);
-  color: var(--text-2);
-  font-size: 0.68rem;
+  background: rgba(255 255 255 / 0.09);
+  color: rgba(230 238 255 / 0.82);
+  font-size: 0.65rem;
   line-height: 1;
 }
 
@@ -511,20 +524,20 @@ button:disabled { cursor: default; }
   width: calc(100% - 28px);
   margin: 10px 14px 0;
   resize: vertical;
-  min-height: 92px;
+  min-height: 88px;
   max-height: 220px;
   padding: 10px 11px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  border: 1px solid rgba(255 255 255 / 0.10);
+  border-radius: 10px;
   outline: none;
-  background: rgba(5 8 14 / 0.34);
+  background: rgba(255 255 255 / 0.055);
   color: var(--text-1);
   line-height: 1.55;
 }
 
 .comment-composer textarea:focus {
-  border-color: rgba(93 156 255 / 0.72);
-  box-shadow: 0 0 0 3px rgba(93 156 255 / 0.14);
+  border-color: rgba(130 190 255 / 0.45);
+  box-shadow: 0 0 0 2px rgba(110 170 255 / 0.10);
 }
 
 [data-theme="light"] .comment-composer textarea {
@@ -551,19 +564,24 @@ button:disabled { cursor: default; }
 }
 
 .comment-actions button {
-  border: 1px solid var(--border);
+  border: 1px solid rgba(255 255 255 / 0.12);
   border-radius: 8px;
-  background: rgba(255 255 255 / 0.055);
+  background: rgba(255 255 255 / 0.07);
   color: var(--text-2);
-  padding: 7px 10px;
+  padding: 7px 12px;
   font-size: 0.78rem;
-  font-weight: 700;
+  font-weight: 600;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+.comment-actions button:hover:not(:disabled) {
+  background: rgba(255 255 255 / 0.11);
 }
 
 .comment-actions button:last-child {
-  border-color: transparent;
-  background: var(--accent);
-  color: white;
+  border-color: rgba(120 185 255 / 0.38);
+  background: linear-gradient(135deg, rgba(100 170 255 / 0.82), rgba(120 100 255 / 0.80));
+  color: rgba(255 255 255 / 0.95);
 }
 
 .comment-actions button:disabled {
@@ -912,9 +930,9 @@ button:disabled { cursor: default; }
 
 .command-placeholder {
   display: block;
-  color: rgba(226 233 249 / 0.74);
+  color: rgba(255 255 255 / 0.52);
   font-size: 0.96rem;
-  font-weight: 520;
+  font-weight: 440;
   line-height: 1;
   white-space: nowrap;
   overflow: hidden;
@@ -964,9 +982,9 @@ button:disabled { cursor: default; }
   right: 52px;
   bottom: 10px;
   left: 66px;
-  color: rgba(194 202 223 / 0.62);
+  color: rgba(255 255 255 / 0.38);
   font-size: 0.72rem;
-  font-weight: 560;
+  font-weight: 480;
   line-height: 1;
   text-align: center;
   white-space: nowrap;
@@ -975,7 +993,7 @@ button:disabled { cursor: default; }
 }
 
 .command-help span {
-  color: rgba(194 202 223 / 0.32);
+  color: rgba(255 255 255 / 0.18);
   margin: 0 9px;
 }
 
@@ -1050,7 +1068,8 @@ button:disabled { cursor: default; }
   font-size: 1.08rem;
   font-weight: 520;
   line-height: 1.55;
-  text-shadow: 0 1px 14px rgba(0 0 0 / 0.26);
+  color: rgba(255 255 255 / 0.90);
+  text-shadow: 0 1px 14px rgba(0 0 0 / 0.22);
 }
 
 .segment-badge {
@@ -1061,25 +1080,32 @@ button:disabled { cursor: default; }
 }
 
 .segment-badge-todo {
-  color: #ffe4a3;
-  background: rgba(151 98 14 / 0.72);
-  border-color: rgba(245 158 11 / 0.38);
+  color: #f8d675;
+  background: rgba(255 190 60 / 0.13);
+  border-color: rgba(255 210 110 / 0.22);
+  box-shadow: inset 0 1px 0 rgba(255 255 255 / 0.10);
 }
 
 .segment-badge-fixme {
-  color: #ffd2d7;
-  background: rgba(140 41 52 / 0.72);
-  border-color: rgba(239 68 68 / 0.34);
+  color: #ff9b9b;
+  background: rgba(255 90 90 / 0.13);
+  border-color: rgba(255 130 130 / 0.22);
+  box-shadow: inset 0 1px 0 rgba(255 255 255 / 0.10);
 }
 
 .segment-shortcuts {
-  margin: -2px 6px 0 auto;
-  padding: 11px 14px;
-  border-color: rgba(207 221 255 / 0.12);
-  background: rgba(47 59 82 / 0.70);
+  bottom: 12px;
+  right: 16px;
+  padding: 7px 11px;
+  border-color: rgba(255 255 255 / 0.10);
+  background: rgba(6 10 20 / 0.62);
   box-shadow:
-    inset 0 1px 0 rgba(255 255 255 / 0.06),
-    0 10px 26px rgba(0 0 0 / 0.20);
+    inset 0 1px 0 rgba(255 255 255 / 0.08),
+    0 8px 22px rgba(0 0 0 / 0.28);
+  backdrop-filter: blur(24px) saturate(1.5);
+  -webkit-backdrop-filter: blur(24px) saturate(1.5);
+  border-radius: 12px;
+  font-size: 0.72rem;
 }
 
 .segment-sidecar::before {
@@ -1087,6 +1113,8 @@ button:disabled { cursor: default; }
   left: -52px;
   width: 52px;
   border-top-color: rgba(64 140 255 / 0.62);
+  opacity: 0;
+  transition: opacity 0.2s ease;
 }
 
 .segment-sidecar::after {
@@ -1094,22 +1122,30 @@ button:disabled { cursor: default; }
   position: absolute;
   top: 46px;
   left: -58px;
-  width: 12px;
-  height: 12px;
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
-  background: #3f80ff;
-  box-shadow: 0 0 18px rgba(64 140 255 / 0.70);
+  background: rgba(80 160 255 / 0.90);
+  box-shadow: 0 0 14px rgba(64 140 255 / 0.60);
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.segment-row.is-selected-row .segment-sidecar::before,
+.segment-row.is-selected-row .segment-sidecar::after {
+  opacity: 1;
 }
 
 .comment-card {
-  margin-top: 14px;
-  border-color: rgba(207 221 255 / 0.12);
+  margin-top: 10px;
+  border-radius: 16px;
+  border-color: rgba(238 245 255 / 0.12);
   background:
-    linear-gradient(180deg, rgba(52 64 88 / 0.72), rgba(27 37 56 / 0.68)),
-    rgba(22 31 49 / 0.70);
+    linear-gradient(180deg, rgba(255 255 255 / 0.12), rgba(255 255 255 / 0.032)),
+    rgba(20 30 50 / 0.24);
   box-shadow:
-    inset 0 1px 0 rgba(255 255 255 / 0.06),
-    0 16px 42px rgba(0 0 0 / 0.24);
+    inset 0 1px 0 rgba(255 255 255 / 0.18),
+    0 14px 38px rgba(0 0 0 / 0.20);
 }
 
 .comment-item {
@@ -1119,8 +1155,20 @@ button:disabled { cursor: default; }
   font-size: 0.92rem;
 }
 
+.segment-meta {
+  color: rgba(255 255 255 / 0.34);
+  font-weight: 540;
+}
+
 .comment-card-title {
-  color: rgba(226 233 249 / 0.72);
+  color: rgba(255 255 255 / 0.44);
+  letter-spacing: 0.04em;
+}
+
+.comment-item {
+  color: rgba(255 255 255 / 0.82);
+  font-size: 0.94rem;
+  line-height: 1.58;
 }
 
 .empty-state {
@@ -1295,7 +1343,9 @@ button:disabled { cursor: default; }
   grid-row: 2;
   margin: 6px 0 0;
   font-size: 1.08rem;
-  color: rgba(239 245 255 / 0.86);
+  font-weight: 650;
+  letter-spacing: -0.018em;
+  color: rgba(255 255 255 / 0.90);
 }
 
 .command-bar {
@@ -1383,7 +1433,7 @@ button:disabled { cursor: default; }
 }
 
 .segment-card.is-selected {
-  min-height: 98px;
+  min-height: 72px;
   background:
     linear-gradient(180deg, rgba(94 151 255 / 0.22), rgba(255 255 255 / 0.045)),
     rgba(16 29 50 / 0.44);
@@ -1702,4 +1752,35 @@ button:disabled { cursor: default; }
     inset 0 1px 0 rgba(255 255 255 / 0.55),
     0 0 24px rgba(110 130 255 / 0.52),
     0 10px 22px rgba(0 0 0 / 0.30);
+}
+
+/* --- Command bar: hidden by default, revealed by ⌘P or top-center hover --- */
+
+/* Invisible hover trigger zone at top-center of viewport */
+.cmd-hotzone {
+  position: fixed;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 580px;
+  height: 72px;
+  z-index: 50;
+  /* transparent — just for pointer event capture */
+}
+
+/* Default: invisible */
+.command-bar {
+  opacity: 0;
+  transform: translateY(-10px) scale(0.97);
+  pointer-events: none;
+  transition:
+    opacity 220ms ease,
+    transform 240ms cubic-bezier(0.34, 1.42, 0.64, 1);
+}
+
+/* Revealed state */
+.command-bar.is-visible {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  pointer-events: auto;
 }
