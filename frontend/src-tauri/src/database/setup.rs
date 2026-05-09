@@ -12,6 +12,14 @@ pub async fn initialize_database_on_startup(app: &AppHandle) -> Result<(), Strin
         .await
         .map_err(|e| format!("Failed to check first launch status: {}", e))?;
 
+    // Always initialize the DB and manage AppState so downstream consumers
+    // (e.g. the External Web UI server) can rely on AppState being present.
+    let db_manager = DatabaseManager::new_from_app_handle(app)
+        .await
+        .map_err(|e| format!("Failed to initialize database manager: {}", e))?;
+    app.manage(AppState { db_manager });
+    info!("Database initialized successfully");
+
     if is_first_launch {
         info!("First launch detected - will notify window when ready");
 
@@ -24,14 +32,6 @@ pub async fn initialize_database_on_startup(app: &AppHandle) -> Result<(), Strin
                 .expect("Failed to emit first-launch-detected event");
             info!("Emitted first-launch-detected after delay");
         });
-    } else {
-        // Normal flow - initialize database immediately
-        let db_manager = DatabaseManager::new_from_app_handle(app)
-            .await
-            .map_err(|e| format!("Failed to initialize database manager: {}", e))?;
-
-        app.manage(AppState { db_manager });
-        info!("Database initialized successfully");
     }
 
     Ok(())
