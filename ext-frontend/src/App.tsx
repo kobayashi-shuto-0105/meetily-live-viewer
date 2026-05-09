@@ -135,7 +135,6 @@ function App() {
   return (
     <div className="meetily-app">
       <div className="app-frame">
-        <WindowControls />
         <header className="app-header">
           <div className="brand-corner" aria-label="Meetily">
             <img
@@ -164,16 +163,6 @@ function App() {
 // ----------------------------------------------------------------
 // Sub-components
 // ----------------------------------------------------------------
-
-function WindowControls() {
-  return (
-    <div className="window-controls" aria-hidden="true">
-      <span className="window-dot window-dot-red" />
-      <span className="window-dot window-dot-yellow" />
-      <span className="window-dot window-dot-green" />
-    </div>
-  );
-}
 
 function CommandBar() {
   return (
