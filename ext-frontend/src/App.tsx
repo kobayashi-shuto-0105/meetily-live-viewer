@@ -71,13 +71,27 @@ function App() {
     const ws = createWebSocketClient({
       onEvent: (event) => {
         switch (event.type) {
-          case "RecordingStarted":
-            startSession(
-              event.payload.session_id,
-              event.payload.meeting_title,
-              event.payload.started_at
-            );
+          case "RecordingStarted": {
+            // If the server re-sends RecordingStarted for the SAME session we
+            // already restored from the REST API, don't call startSession()
+            // (which clears all segments). Use restoreSession() instead so
+            // the transcripts we just fetched are preserved.
+            const existingId = useTranscriptStore.getState().session?.sessionId;
+            if (existingId === event.payload.session_id) {
+              restoreSession(
+                event.payload.session_id,
+                event.payload.meeting_title,
+                event.payload.started_at
+              );
+            } else {
+              startSession(
+                event.payload.session_id,
+                event.payload.meeting_title,
+                event.payload.started_at
+              );
+            }
             break;
+          }
           case "RecordingStopped":
             stopSession();
             break;

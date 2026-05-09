@@ -66,9 +66,9 @@ export class ApiClient {
   private readonly token: string;
 
   constructor(options?: ApiClientOptions) {
-    // 環境変数からデフォルト値を取得する
-    this.baseUrl = options?.baseUrl ?? import.meta.env.VITE_MEETILY_API_BASE;
-    this.token = options?.token ?? import.meta.env.VITE_MEETILY_ACCESS_TOKEN;
+    // Env var → empty string (same origin, works with Vite dev proxy)
+    this.baseUrl = options?.baseUrl ?? import.meta.env.VITE_MEETILY_API_BASE ?? "";
+    this.token = options?.token ?? import.meta.env.VITE_MEETILY_ACCESS_TOKEN ?? "dev-token";
   }
 
   // -------------------------------------------------------------------------
@@ -80,7 +80,9 @@ export class ApiClient {
    * 全リクエストにクエリパラメータ `?token=xxx` を付与する。
    */
   private buildUrl(path: string): string {
-    const url = new URL(path, this.baseUrl);
+    // When baseUrl is empty, resolve against the current page origin (proxy mode)
+    const base = this.baseUrl || window.location.origin;
+    const url = new URL(path, base);
     url.searchParams.set("token", this.token);
     return url.toString();
   }
@@ -120,7 +122,8 @@ export class ApiClient {
   /** サーバーの疎通確認を行う（認証不要） */
   async checkHealth(): Promise<boolean> {
     try {
-      const url = new URL("/health", this.baseUrl).toString();
+      const base = this.baseUrl || window.location.origin;
+      const url = new URL("/health", base).toString();
       const response = await fetch(url);
       return response.ok;
     } catch {

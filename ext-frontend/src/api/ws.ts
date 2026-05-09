@@ -87,9 +87,17 @@ export function createWebSocketClient(
 ): WebSocketClient {
   const { onEvent, onStatusChange } = options;
 
-  // 環境変数からデフォルト値を取得する
-  const wsUrl = options.wsUrl ?? import.meta.env.VITE_MEETILY_WS_URL;
-  const token = options.token ?? import.meta.env.VITE_MEETILY_ACCESS_TOKEN;
+  // Derive WS URL: env var → same-origin proxy (works with Vite dev proxy)
+  const wsUrl: string =
+    options.wsUrl ??
+    import.meta.env.VITE_MEETILY_WS_URL ??
+    (() => {
+      const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+      return `${proto}//${window.location.host}/ws`;
+    })();
+
+  const token: string =
+    options.token ?? import.meta.env.VITE_MEETILY_ACCESS_TOKEN ?? "dev-token";
 
   // 内部状態
   let socket: WebSocket | null = null;

@@ -1,17 +1,43 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
-// =============================================================================
-// Vite 設定
-// =============================================================================
-// External Web UI の開発サーバー設定。
-// - ポート 5173 で起動（Meetily 本体の 3118 とは別ポート）
-// - LAN 公開時は `--host 0.0.0.0` オプションを付けて起動する
-// =============================================================================
-export default defineConfig({
-  plugins: [react()],
-  server: {
-    // デフォルトポート（Vite デフォルトと同じだが明示的に指定）
-    port: 5173,
-  },
+// ----------------------------------------------------------------
+// Meetily External Web UI – Vite configuration
+//
+// Dev proxy: forwards /api, /health, /ws to the Meetily backend
+// (default port 38391).  Override VITE_BACKEND_PORT in .env if needed.
+//
+// With the proxy in place, no .env is required for local development:
+//   - API base URL defaults to "" (same origin, proxied)
+//   - WS URL defaults to ws://localhost:5173/ws (proxied)
+// ----------------------------------------------------------------
+
+export default defineConfig(({ mode }) => {
+  const backendPort = process.env.VITE_BACKEND_PORT ?? "38391";
+  const backendBase = `http://127.0.0.1:${backendPort}`;
+
+  return {
+    plugins: [react()],
+    server: {
+      port: 5173,
+      proxy:
+        mode !== "production"
+          ? {
+              "/api": {
+                target: backendBase,
+                changeOrigin: true,
+              },
+              "/health": {
+                target: backendBase,
+                changeOrigin: true,
+              },
+              "/ws": {
+                target: backendBase.replace("http", "ws"),
+                ws: true,
+                changeOrigin: true,
+              },
+            }
+          : undefined,
+    },
+  };
 });
