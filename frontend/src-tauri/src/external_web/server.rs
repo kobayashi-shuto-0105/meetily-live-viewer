@@ -8,11 +8,11 @@
 //   GET  /health                                - 疎通確認（認証不要）
 //   WS   /ws?token=xxx                          - リアルタイム WebSocket 購読
 //   GET  /api/sessions/current?token=xxx        - 現在の録音セッション取得
-//   GET  /api/sessions/:id/transcripts?token=xxx - セッション内セグメント取得
-//   GET  /api/meetings/:id/transcripts?token=xxx - 保存済み会議の文字起こし取得
-//   POST /api/segments/:id/revisions?token=xxx  - 文字起こし修正
-//   POST /api/segments/:id/comments?token=xxx   - コメント追加
-//   POST /api/segments/:id/highlights?token=xxx - ハイライト追加
+//   GET  /api/sessions/{id}/transcripts?token=xxx - セッション内セグメント取得
+//   GET  /api/meetings/{id}/transcripts?token=xxx - 保存済み会議の文字起こし取得
+//   POST /api/segments/{id}/revisions?token=xxx  - 文字起こし修正
+//   POST /api/segments/{id}/comments?token=xxx   - コメント追加
+//   POST /api/segments/{id}/highlights?token=xxx - ハイライト追加
 //
 // 認証方式（プラン §8.7）:
 //   クエリパラメータ `?token=xxx` でトークン認証する。
@@ -139,21 +139,21 @@ fn build_router(state: ServerState) -> Router {
         .route("/api/sessions/current", get(get_current_session))
         // セッション内の全セグメントを取得する（リアルタイム中 or 録音後）
         .route(
-            "/api/sessions/:session_id/transcripts",
+            "/api/sessions/{session_id}/transcripts",
             get(get_session_transcripts),
         )
         // 保存済み会議の文字起こし + overlay を取得する
         .route(
-            "/api/meetings/:meeting_id/transcripts",
+            "/api/meetings/{meeting_id}/transcripts",
             get(get_meeting_transcripts),
         )
         // 文字起こし修正（revision）を作成する
-        .route("/api/segments/:segment_id/revisions", post(create_revision))
+        .route("/api/segments/{segment_id}/revisions", post(create_revision))
         // コメントを追加する
-        .route("/api/segments/:segment_id/comments", post(create_comment))
+        .route("/api/segments/{segment_id}/comments", post(create_comment))
         // ハイライトを追加する
         .route(
-            "/api/segments/:segment_id/highlights",
+            "/api/segments/{segment_id}/highlights",
             post(create_highlight),
         )
         // トークン認証ミドルウェアを適用する
