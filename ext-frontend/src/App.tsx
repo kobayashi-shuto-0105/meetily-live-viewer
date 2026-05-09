@@ -35,6 +35,7 @@ function App() {
     addRevision,
     addComment,
     addHighlight,
+    removeHighlight,
     startSession,
     stopSession,
     setMeetingId,
@@ -114,6 +115,9 @@ function App() {
             break;
           case "TranscriptHighlightCreated":
             addHighlight(event.payload);
+            break;
+          case "TranscriptHighlightDeleted":
+            removeHighlight(event.payload);
             break;
         }
       },

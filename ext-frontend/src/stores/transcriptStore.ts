@@ -5,6 +5,7 @@ import type {
   TranscriptRevisionPayload,
   TranscriptCommentPayload,
   TranscriptHighlightPayload,
+  TranscriptHighlightDeletedPayload,
   TranscriptSegmentView,
   ConnectionStatus,
   SessionInfo,
@@ -40,6 +41,7 @@ interface TranscriptState {
   addRevision: (payload: TranscriptRevisionPayload) => void;
   addComment: (payload: TranscriptCommentPayload) => void;
   addHighlight: (payload: TranscriptHighlightPayload) => void;
+  removeHighlight: (payload: TranscriptHighlightDeletedPayload) => void;
   loadSegments: (responses: TranscriptSegmentResponse[]) => void;
   clearSegments: () => void;
 
@@ -179,6 +181,21 @@ export const useTranscriptStore = create<TranscriptState>((set) => ({
       };
 
       newSegments.set(payload.external_segment_id, updatedSegment);
+      return { segments: newSegments, sortedSegments: toSortedArray(newSegments) };
+    }),
+
+  removeHighlight: (payload) =>
+    set((state) => {
+      const newSegments = new Map(state.segments);
+      const segment = newSegments.get(payload.external_segment_id);
+      if (!segment) return state;
+      const filtered = segment.highlights.filter((h) => h.id !== payload.id);
+      if (filtered.length === segment.highlights.length) return state;
+
+      newSegments.set(payload.external_segment_id, {
+        ...segment,
+        highlights: filtered,
+      });
       return { segments: newSegments, sortedSegments: toSortedArray(newSegments) };
     }),
 

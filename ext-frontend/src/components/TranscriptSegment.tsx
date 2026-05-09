@@ -61,7 +61,7 @@ export function TranscriptSegment({ segment }: Props) {
     [isSelected, segment.id, setSelectedSegmentId]
   );
 
-  const addHighlight = useCallback(
+  const toggleHighlight = useCallback(
     async (kind: "todo" | "fixme") => {
       if (highlightLoading) return;
       const existing = segment.highlights.find(
@@ -70,11 +70,14 @@ export function TranscriptSegment({ segment }: Props) {
           (kind === "todo" && h.color === "yellow") ||
           (kind === "fixme" && h.color === "red")
       );
-      if (existing) return;
 
       setHighlightLoading(kind);
       try {
-        await apiClient.createHighlight(segment.id, { color: kind });
+        if (existing) {
+          await apiClient.deleteHighlight(segment.id, existing.id);
+        } else {
+          await apiClient.createHighlight(segment.id, { color: kind });
+        }
       } finally {
         setHighlightLoading(null);
       }
@@ -100,13 +103,13 @@ export function TranscriptSegment({ segment }: Props) {
 
       if (e.key === "t" || e.key === "T") {
         e.preventDefault();
-        addHighlight("todo");
+        toggleHighlight("todo");
         return;
       }
 
       if (e.key === "f" || e.key === "F") {
         e.preventDefault();
-        addHighlight("fixme");
+        toggleHighlight("fixme");
         return;
       }
 
@@ -115,7 +118,7 @@ export function TranscriptSegment({ segment }: Props) {
         setSelectedSegmentId(null);
       }
     },
-    [addHighlight, openCommentInput, segment.id, setSelectedSegmentId]
+    [toggleHighlight, openCommentInput, segment.id, setSelectedSegmentId]
   );
 
   const highlightKind = getHighlightKind(segment.highlights);

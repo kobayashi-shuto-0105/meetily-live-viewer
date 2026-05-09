@@ -36,7 +36,7 @@ use axum::{
     http::StatusCode,
     middleware::{self, Next},
     response::IntoResponse,
-    routing::{get, post},
+    routing::{delete, get, post},
     Json, Router,
 };
 use futures_util::{SinkExt, StreamExt};
@@ -48,8 +48,8 @@ use crate::database::repositories::external_web::ExternalWebRepository;
 
 use super::state::ExternalWebState;
 use super::types::{
-    ExternalWebEvent, TranscriptCommentPayload, TranscriptHighlightPayload,
-    TranscriptRevisionPayload,
+    ExternalWebEvent, TranscriptCommentPayload, TranscriptHighlightDeletedPayload,
+    TranscriptHighlightPayload, TranscriptRevisionPayload,
 };
 
 // =============================================================================
@@ -155,6 +155,11 @@ fn build_router(state: ServerState) -> Router {
         .route(
             "/api/segments/{segment_id}/highlights",
             post(create_highlight),
+        )
+        // ハイライトを削除する（同種ハイライトの再付与でトグル取り消しに使う）
+        .route(
+            "/api/segments/{segment_id}/highlights/{highlight_id}",
+            delete(delete_highlight),
         )
         // トークン認証ミドルウェアを適用する
         .layer(middleware::from_fn_with_state(
@@ -672,6 +677,56 @@ async fn create_highlight(
                 status,
                 Json(serde_json::json!({
                     "error": "Failed to create highlight"
+                })),
+            )
+                .into_response()
+        }
+    }
+}
+
+// =============================================================================
+// ハイライト削除
+// =============================================================================
+
+/// セグメントに紐付くハイライトを削除する。
+/// 同種ハイライトの再付与によるトグル取り消し操作で使われる。
+/// 削除後、WebSocket で `TranscriptHighlightDeleted` をブロードキャストする。
+async fn delete_highlight(
+    State(state): State<ServerState>,
+    Path((segment_id, highlight_id)): Path<(String, String)>,
+) -> impl IntoResponse {
+    match ExternalWebRepository::delete_highlight(&state.pool, &highlight_id).await {
+        Ok(_) => {
+            state
+                .external_state
+                .publish(ExternalWebEvent::TranscriptHighlightDeleted(
+                    TranscriptHighlightDeletedPayload {
+                        id: highlight_id.clone(),
+                        external_segment_id: segment_id.clone(),
+                    },
+                ));
+
+            log::info!(
+                "External Web UI: highlight deleted (id={}, segment={})",
+                highlight_id,
+                segment_id
+            );
+
+            StatusCode::NO_CONTENT.into_response()
+        }
+        Err(e) => {
+            let status = classify_db_error(&e);
+            log::error!(
+                "External Web UI: failed to delete highlight (id={}, segment={}, status={}): {}",
+                highlight_id,
+                segment_id,
+                status,
+                e
+            );
+            (
+                status,
+                Json(serde_json::json!({
+                    "error": "Failed to delete highlight"
                 })),
             )
                 .into_response()

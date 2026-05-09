@@ -36,6 +36,8 @@ pub enum ExternalWebEvent {
     TranscriptCommentCreated(TranscriptCommentPayload),
     /// ハイライトが追加されたことを通知する
     TranscriptHighlightCreated(TranscriptHighlightPayload),
+    /// ハイライトが削除されたことを通知する
+    TranscriptHighlightDeleted(TranscriptHighlightDeletedPayload),
 }
 
 // =============================================================================
@@ -137,6 +139,16 @@ pub struct TranscriptCommentPayload {
     pub anchor_end: Option<i64>,
     /// anchor の基準となった revision（raw_text 基準なら None）
     pub anchor_revision_id: Option<String>,
+}
+
+/// ハイライト削除イベントのペイロード。
+/// 該当 ID のハイライトを UI 側のセグメントから取り除くために配信する。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TranscriptHighlightDeletedPayload {
+    /// 削除された external_transcript_highlights.id
+    pub id: String,
+    /// 対象セグメントの ID
+    pub external_segment_id: String,
 }
 
 /// ハイライト追加イベントのペイロード。

@@ -11,6 +11,7 @@
 //   POST /api/segments/:id/revisions            - 文字起こし修正作成
 //   POST /api/segments/:id/comments             - コメント追加
 //   POST /api/segments/:id/highlights           - ハイライト追加
+//   DELETE /api/segments/:id/highlights/:hid    - ハイライト削除（トグル取り消し）
 //
 // 認証:
 //   全リクエストにクエリパラメータ `?token=xxx` を付与する。
@@ -240,6 +241,29 @@ export class ApiClient {
         body: JSON.stringify(body),
       }
     );
+  }
+
+  /**
+   * 指定セグメントのハイライトを削除する。
+   * 同種ハイライトの再付与によるトグル取り消し操作で使われる。
+   * 成功時は 204 No Content が返るため、JSON パースを避ける専用パスを通す。
+   */
+  async deleteHighlight(
+    segmentId: string,
+    highlightId: string
+  ): Promise<void> {
+    const url = this.buildUrl(
+      `/api/segments/${encodeURIComponent(segmentId)}/highlights/${encodeURIComponent(highlightId)}`
+    );
+    const response = await fetch(url, { method: "DELETE" });
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => "Unknown error");
+      throw new ApiError(
+        response.status,
+        errorText,
+        `/api/segments/${segmentId}/highlights/${highlightId}`
+      );
+    }
   }
 }
 

@@ -1348,11 +1348,11 @@ button:disabled { cursor: default; }
   gap: 7px;
 }
 
-.segment-row:not(.has-sidecar) {
-  grid-template-columns: minmax(0, var(--segment-width));
-  justify-content: center;
-}
-
+/* Reserve the sidecar column even when there is no sidecar, so the
+   segment card stays in the same horizontal position when a comment
+   is opened. The right cell is simply left empty in the no-sidecar case. */
+.segment-row,
+.segment-row:not(.has-sidecar),
 .segment-row.has-sidecar {
   grid-template-columns: minmax(0, var(--segment-width)) var(--sidecar-width);
   gap: 28px;

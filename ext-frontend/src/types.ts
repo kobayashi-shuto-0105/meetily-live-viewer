@@ -27,7 +27,8 @@ export type ExternalWebEvent =
   | { type: "TranscriptSegmentUpserted"; payload: TranscriptSegmentPayload }
   | { type: "TranscriptRevisionCreated"; payload: TranscriptRevisionPayload }
   | { type: "TranscriptCommentCreated"; payload: TranscriptCommentPayload }
-  | { type: "TranscriptHighlightCreated"; payload: TranscriptHighlightPayload };
+  | { type: "TranscriptHighlightCreated"; payload: TranscriptHighlightPayload }
+  | { type: "TranscriptHighlightDeleted"; payload: TranscriptHighlightDeletedPayload };
 
 // =============================================================================
 // イベントペイロード型
@@ -120,6 +121,17 @@ export interface TranscriptCommentPayload {
   anchor_end: number | null;
   /** anchor の基準となった revision（raw_text 基準なら null） */
   anchor_revision_id: string | null;
+}
+
+/**
+ * ハイライト削除イベントのペイロード。
+ * 該当 ID のハイライトを UI 側のセグメントから取り除く。
+ */
+export interface TranscriptHighlightDeletedPayload {
+  /** 削除された external_transcript_highlights.id */
+  id: string;
+  /** 対象セグメントの ID */
+  external_segment_id: string;
 }
 
 /** ハイライト追加イベントのペイロード */
