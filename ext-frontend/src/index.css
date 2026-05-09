@@ -1109,10 +1109,10 @@ button:disabled { cursor: default; }
 }
 
 .segment-sidecar::before {
-  top: 52px;
-  left: -52px;
-  width: 52px;
-  border-top-color: rgba(64 140 255 / 0.62);
+  top: 36px;
+  left: -16px;
+  width: 16px;
+  border-top-color: rgba(100 170 255 / 0.50);
   opacity: 0;
   transition: opacity 0.2s ease;
 }
@@ -1120,13 +1120,13 @@ button:disabled { cursor: default; }
 .segment-sidecar::after {
   content: "";
   position: absolute;
-  top: 46px;
-  left: -58px;
+  top: 31px;
+  left: -21px;
   width: 10px;
   height: 10px;
   border-radius: 50%;
   background: rgba(80 160 255 / 0.90);
-  box-shadow: 0 0 14px rgba(64 140 255 / 0.60);
+  box-shadow: 0 0 12px rgba(64 140 255 / 0.55);
   opacity: 0;
   transition: opacity 0.2s ease;
 }
@@ -1400,30 +1400,31 @@ button:disabled { cursor: default; }
 }
 
 .transcript-stage {
-  --segment-width: 880px;
-  --sidecar-width: 300px;
-  width: min(calc(100% - 64px), 1240px);
+  --segment-width: 800px;
+  --sidecar-width: 240px;
+  width: min(calc(100% - 64px), 1320px);
   gap: 7px;
 }
 
-/* Flex-based layout: card is always centered; sidecar appears to the right */
+/* 3-column symmetric grid: [mirror] [card] [sidecar]
+   The card always stays in column 2 — no layout shift when a comment opens. */
 .segment-row,
 .segment-row:not(.has-sidecar),
 .segment-row.has-sidecar {
-  display: flex;
-  align-items: start;
+  display: grid;
+  grid-template-columns: var(--sidecar-width) minmax(0, var(--segment-width)) var(--sidecar-width);
+  gap: 16px;
   justify-content: center;
-  gap: 28px;
 }
 
 .segment-row > .segment-card {
-  flex: 0 1 var(--segment-width);
+  grid-column: 2;
   min-width: 0;
   width: 100%;
 }
 
 .segment-row > .segment-sidecar {
-  flex: 0 0 var(--sidecar-width);
+  grid-column: 3;
 }
 
 .segment-card {
@@ -1507,13 +1508,15 @@ button:disabled { cursor: default; }
 
   .segment-row.has-sidecar,
   .segment-row:not(.has-sidecar) {
+    display: flex;
     flex-direction: column;
     align-items: stretch;
     gap: 8px;
   }
 
+  .segment-row > .segment-card,
   .segment-row > .segment-sidecar {
-    flex: 0 0 auto;
+    grid-column: unset;
     width: 100%;
   }
 }
