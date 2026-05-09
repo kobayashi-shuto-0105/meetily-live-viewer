@@ -12,10 +12,18 @@ export function TranscriptViewer() {
   const session = useTranscriptStore((s) => s.session);
   const setSelectedSegmentId = useTranscriptStore((s) => s.setSelectedSegmentId);
 
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    const scrollEl = scrollRef.current;
+    if (!scrollEl) return;
+
+    requestAnimationFrame(() => {
+      scrollEl.scrollTo({
+        top: scrollEl.scrollHeight,
+        behavior: "smooth",
+      });
+    });
   }, [segments.length]);
 
   const handleBackdropClick = useCallback(
@@ -27,7 +35,7 @@ export function TranscriptViewer() {
 
   return (
     <main className="transcript-viewer">
-      <div className="transcript-scroll" onClick={handleBackdropClick}>
+      <div ref={scrollRef} className="transcript-scroll" onClick={handleBackdropClick}>
         <div className="transcript-stage">
           {segments.length === 0 ? (
             <EmptyState session={session} />
@@ -36,7 +44,6 @@ export function TranscriptViewer() {
               <TranscriptSegment key={segment.id} segment={segment} />
             ))
           )}
-          <div ref={bottomRef} />
         </div>
       </div>
     </main>
