@@ -89,6 +89,8 @@ export function CommentPanel({
 
       // 送信成功: 入力フォームをクリアする（パネルは閉じない）
       setCommentText("");
+      setAuthorName("");
+      setErrorMessage(null);
     } catch (error) {
       // 送信失敗: エラーメッセージを表示する
       const message =

@@ -200,6 +200,9 @@ export const useTranscriptStore = create<TranscriptState>((set) => ({
       // 対象セグメントが存在しない場合は何もしない
       if (!segment) return state;
 
+      // 同じリビジョン ID が既に存在する場合はスキップ（重複防止）
+      if (segment.revisions.some((r) => r.id === payload.id)) return state;
+
       // revision を追加し、displayText を最新の revision テキストに更新する
       const updatedSegment: TranscriptSegmentView = {
         ...segment,
@@ -221,6 +224,9 @@ export const useTranscriptStore = create<TranscriptState>((set) => ({
       // 対象セグメントが存在しない場合は何もしない
       if (!segment) return state;
 
+      // 同じコメント ID が既に存在する場合はスキップ（重複防止）
+      if (segment.comments.some((c) => c.id === payload.id)) return state;
+
       const updatedSegment: TranscriptSegmentView = {
         ...segment,
         comments: [...segment.comments, payload],
@@ -239,6 +245,9 @@ export const useTranscriptStore = create<TranscriptState>((set) => ({
 
       // 対象セグメントが存在しない場合は何もしない
       if (!segment) return state;
+
+      // 同じハイライト ID が既に存在する場合はスキップ（重複防止）
+      if (segment.highlights.some((h) => h.id === payload.id)) return state;
 
       const updatedSegment: TranscriptSegmentView = {
         ...segment,

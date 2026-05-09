@@ -98,6 +98,7 @@ export function HighlightToolbar({
 
       // 追加成功: メモ入力をクリアする（ツールバーは閉じない）
       setNote("");
+      setErrorMessage(null);
     } catch (error) {
       // 追加失敗: エラーメッセージを表示する
       const message =
@@ -189,10 +190,10 @@ export function HighlightToolbar({
                   width: "12px",
                   height: "12px",
                   borderRadius: "50%",
-                  // カラーパレットから hex を取得、見つからなければ色名をそのまま使用
+                  // カラーパレットから hex を取得、見つからなければデフォルト色を使用
                   backgroundColor:
                     HIGHLIGHT_COLORS.find((c) => c.key === highlight.color)
-                      ?.hex ?? highlight.color,
+                      ?.hex ?? HIGHLIGHT_COLORS[0].hex,
                   flexShrink: 0,
                 }}
               />
