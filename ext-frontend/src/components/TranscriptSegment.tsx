@@ -12,13 +12,13 @@
 //   - コメント数・ハイライト数
 //
 // 後続 PR で追加予定:
-//   - コメントボタン → CommentPanel 表示
 //   - ハイライトボタン → HighlightToolbar 表示
 // =============================================================================
 
 import { useState } from "react";
 import type { TranscriptSegmentView } from "../types";
 import { TranscriptEditor } from "./TranscriptEditor";
+import { CommentPanel } from "./CommentPanel";
 
 // =============================================================================
 // Props 型定義
@@ -43,6 +43,9 @@ export function TranscriptSegment({ segment }: TranscriptSegmentProps) {
 
   // 編集モードの状態（true のとき TranscriptEditor を表示する）
   const [isEditing, setIsEditing] = useState(false);
+
+  // コメントパネルの表示状態（true のとき CommentPanel を表示する）
+  const [showComments, setShowComments] = useState(false);
 
   // revision が存在するかどうか（display_text が raw_text と異なるか）
   const hasRevision = segment.revisions.length > 0;
@@ -185,10 +188,23 @@ export function TranscriptSegment({ segment }: TranscriptSegmentProps) {
             ✏️ 編集
           </button>
         )}
-        {/* コメント数 */}
-        {commentCount > 0 && (
-          <span>💬 {commentCount}</span>
-        )}
+
+        {/* コメントボタン: クリックで CommentPanel を表示/非表示する */}
+        <button
+          onClick={() => setShowComments(!showComments)}
+          style={{
+            background: "none",
+            border: "1px solid #d1d5db",
+            borderRadius: "4px",
+            padding: "0.15rem 0.5rem",
+            fontSize: "0.75rem",
+            color: showComments ? "#f59e0b" : "#6b7280",
+            cursor: "pointer",
+          }}
+          title="コメントを表示/追加"
+        >
+          💬 {commentCount > 0 ? commentCount : "コメント"}
+        </button>
 
         {/* ハイライト数 */}
         {highlightCount > 0 && (
@@ -200,6 +216,15 @@ export function TranscriptSegment({ segment }: TranscriptSegmentProps) {
           <span>✏️ v{segment.revisions.length}</span>
         )}
       </div>
+
+      {/* --- コメントパネル（showComments が true のとき表示） --- */}
+      {showComments && (
+        <CommentPanel
+          segmentId={segment.id}
+          comments={segment.comments}
+          onClose={() => setShowComments(false)}
+        />
+      )}
     </div>
   );
 }
