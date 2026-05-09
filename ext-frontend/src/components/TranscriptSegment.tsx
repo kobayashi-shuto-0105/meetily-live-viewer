@@ -12,13 +12,13 @@
 //   - コメント数・ハイライト数
 //
 // 後続 PR で追加予定:
-//   - 編集ボタン → TranscriptEditor 起動
 //   - コメントボタン → CommentPanel 表示
 //   - ハイライトボタン → HighlightToolbar 表示
 // =============================================================================
 
 import { useState } from "react";
 import type { TranscriptSegmentView } from "../types";
+import { TranscriptEditor } from "./TranscriptEditor";
 
 // =============================================================================
 // Props 型定義
@@ -40,6 +40,9 @@ interface TranscriptSegmentProps {
 export function TranscriptSegment({ segment }: TranscriptSegmentProps) {
   // 元テキストの展開状態（revision がある場合のみ使用）
   const [showRawText, setShowRawText] = useState(false);
+
+  // 編集モードの状態（true のとき TranscriptEditor を表示する）
+  const [isEditing, setIsEditing] = useState(false);
 
   // revision が存在するかどうか（display_text が raw_text と異なるか）
   const hasRevision = segment.revisions.length > 0;
@@ -109,6 +112,15 @@ export function TranscriptSegment({ segment }: TranscriptSegmentProps) {
         {segment.displayText}
       </p>
 
+      {/* --- インラインエディター（編集モード時のみ表示） --- */}
+      {isEditing && (
+        <TranscriptEditor
+          segmentId={segment.id}
+          currentText={segment.displayText}
+          onClose={() => setIsEditing(false)}
+        />
+      )}
+
       {/* --- 元テキスト（revision がある場合のみ表示） --- */}
       {hasRevision && (
         <div style={{ marginTop: "0.25rem" }}>
@@ -155,6 +167,24 @@ export function TranscriptSegment({ segment }: TranscriptSegmentProps) {
           color: "#9ca3af",
         }}
       >
+        {/* 編集ボタン: クリックで TranscriptEditor を表示する */}
+        {!isEditing && (
+          <button
+            onClick={() => setIsEditing(true)}
+            style={{
+              background: "none",
+              border: "1px solid #d1d5db",
+              borderRadius: "4px",
+              padding: "0.15rem 0.5rem",
+              fontSize: "0.75rem",
+              color: "#6b7280",
+              cursor: "pointer",
+            }}
+            title="テキストを編集"
+          >
+            ✏️ 編集
+          </button>
+        )}
         {/* コメント数 */}
         {commentCount > 0 && (
           <span>💬 {commentCount}</span>
