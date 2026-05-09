@@ -1136,6 +1136,14 @@ button:disabled { cursor: default; }
   opacity: 1;
 }
 
+/* Semicircle notch on the card's right edge — sits where the connector dot lands */
+.segment-row.has-sidecar > .segment-card {
+  -webkit-mask-image:
+    radial-gradient(circle 9px at 100% 36px, transparent 9px, black 9px);
+  mask-image:
+    radial-gradient(circle 9px at 100% 36px, transparent 9px, black 9px);
+}
+
 .comment-card {
   margin-top: 10px;
   border-radius: 16px;
