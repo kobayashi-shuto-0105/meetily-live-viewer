@@ -4,6 +4,7 @@ import type { WebSocketClient } from "./api/ws";
 import { apiClient } from "./api/client";
 import { useTranscriptStore } from "./stores/transcriptStore";
 import { TranscriptViewer } from "./components/TranscriptViewer";
+import type { TranscriptSegmentResponse } from "./types";
 
 // ----------------------------------------------------------------
 // Theme helpers
@@ -18,6 +19,82 @@ function loadTheme(): Theme {
 function applyTheme(theme: Theme) {
   document.documentElement.setAttribute("data-theme", theme);
   localStorage.setItem("meetily-theme", theme);
+}
+
+const mockSessionId = "mock-session-sidecar-layout";
+
+function createDevMockSegments(): TranscriptSegmentResponse[] {
+  const base = {
+    session_id: mockSessionId,
+    meeting_id: null,
+    source: "microphone",
+    is_partial: false,
+    confidence: 0.96,
+    revisions: [],
+    highlights: [],
+  };
+
+  return [
+    {
+      ...base,
+      id: "mock-segment-1",
+      sequence_id: 1,
+      raw_text: "You know that.",
+      display_text: "You know that.",
+      timestamp: "01:28",
+      audio_start_time: 88,
+      audio_end_time: 90,
+      duration: 2,
+      comments: [],
+    },
+    {
+      ...base,
+      id: "mock-segment-2",
+      sequence_id: 2,
+      raw_text: "I don't want this one.",
+      display_text: "I don't want this one.",
+      timestamp: "01:29",
+      audio_start_time: 91,
+      audio_end_time: 94,
+      duration: 3,
+      comments: [
+        {
+          id: "mock-comment-1",
+          external_segment_id: "mock-segment-2",
+          comment_text: "この部分は少し意図を補足した方が伝わりやすいかも。",
+          author_name: "Sarah J.",
+          anchor_start: null,
+          anchor_end: null,
+          anchor_revision_id: null,
+          created_at: new Date().toISOString(),
+        },
+      ],
+    },
+    {
+      ...base,
+      id: "mock-segment-3",
+      sequence_id: 3,
+      raw_text: "Let's keep the alternative version for the summary.",
+      display_text: "Let's keep the alternative version for the summary.",
+      timestamp: "01:34",
+      audio_start_time: 96,
+      audio_end_time: 100,
+      duration: 4,
+      comments: [],
+      highlights: [
+        {
+          id: "mock-highlight-1",
+          external_segment_id: "mock-segment-3",
+          color: "todo",
+          note: null,
+          anchor_start: null,
+          anchor_end: null,
+          anchor_revision_id: null,
+          created_at: new Date().toISOString(),
+        },
+      ],
+    },
+  ];
 }
 
 // ----------------------------------------------------------------
@@ -41,6 +118,7 @@ function App() {
     setMeetingId,
     restoreSession,
     loadSegments,
+    setSelectedSegmentId,
     session,
   } = useTranscriptStore();
 
@@ -51,11 +129,18 @@ function App() {
 
   // Restore existing session + segments on first load
   useEffect(() => {
+    function loadDevMockSession() {
+      restoreSession(mockSessionId, null, new Date().toISOString());
+      loadSegments(createDevMockSegments());
+      setSelectedSegmentId("mock-segment-2");
+    }
+
     async function initialLoad() {
       try {
         const current = await apiClient.getCurrentSession();
         if (!current) {
           console.log("[initialLoad] No active session found.");
+          if (import.meta.env.DEV) loadDevMockSession();
           return;
         }
         console.log("[initialLoad] Restoring session:", current.session_id);
@@ -66,6 +151,7 @@ function App() {
       } catch (e) {
         // Log so the error is visible in DevTools — not a fatal failure
         console.warn("[initialLoad] Failed to restore session from REST API:", e);
+        if (import.meta.env.DEV) loadDevMockSession();
       }
     }
     initialLoad();

@@ -1110,10 +1110,10 @@ button:disabled { cursor: default; }
 
 .segment-sidecar::before {
   top: 36px;
-  left: -20px;
-  width: 20px;
+  left: calc(-1 * var(--comment-card-shrink));
+  width: var(--comment-card-shrink);
   border-top-color: rgba(100 170 255 / 0.50);
-  opacity: 0;
+  opacity: 1;
   transition: opacity 0.2s ease;
 }
 
@@ -1121,19 +1121,14 @@ button:disabled { cursor: default; }
   content: "";
   position: absolute;
   top: 31px;
-  left: -25px;
+  left: calc(-1 * var(--comment-card-shrink) - 5px);
   width: 10px;
   height: 10px;
   border-radius: 50%;
   background: rgba(80 160 255 / 0.90);
   box-shadow: 0 0 12px rgba(64 140 255 / 0.55);
-  opacity: 0;
-  transition: opacity 0.2s ease;
-}
-
-.segment-row.is-selected-row .segment-sidecar::before,
-.segment-row.is-selected-row .segment-sidecar::after {
   opacity: 1;
+  transition: opacity 0.2s ease;
 }
 
 .comment-card {
@@ -1169,6 +1164,60 @@ button:disabled { cursor: default; }
   color: rgba(255 255 255 / 0.82);
   font-size: 0.94rem;
   line-height: 1.58;
+}
+
+.comment-item-header {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 12px;
+}
+
+.comment-avatar {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background:
+    linear-gradient(135deg, rgba(255 255 255 / 0.86), rgba(160 190 230 / 0.70)),
+    rgba(255 255 255 / 0.52);
+  color: rgba(18 28 44 / 0.88);
+  font-size: 0.78rem;
+  font-weight: 800;
+  box-shadow: inset 0 1px 0 rgba(255 255 255 / 0.55);
+}
+
+.comment-author {
+  min-width: 0;
+  color: rgba(255 255 255 / 0.80);
+  font-size: 0.88rem;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.comment-menu {
+  color: rgba(255 255 255 / 0.46);
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  line-height: 1;
+}
+
+.comment-body {
+  color: rgba(255 255 255 / 0.86);
+  font-size: 0.94rem;
+  font-weight: 560;
+  line-height: 1.55;
+}
+
+.comment-time {
+  margin-top: 14px;
+  color: rgba(255 255 255 / 0.36);
+  font-size: 0.86rem;
+  font-weight: 560;
 }
 
 .empty-state {
@@ -1400,34 +1449,40 @@ button:disabled { cursor: default; }
 }
 
 .transcript-stage {
-  --sidecar-width: 260px;
-  width: min(calc(100% - 64px), 1060px);
+  --segment-width: 900px;
+  --sidecar-width: 280px;
+  --comment-card-shrink: 62px;
+  width: min(calc(100% - var(--sidecar-width) - 100px), var(--segment-width));
+  margin-left: max(50px, calc((100% - (var(--segment-width) + var(--sidecar-width))) / 2));
+  margin-right: auto;
   gap: 7px;
 }
 
-/* Left-anchored layout:
-   - No comment: card fills the full stage width
-   - With comment: card shrinks, comment appears to the right */
+/* Segment lane stays fixed; comments render outside it. */
 .segment-row,
 .segment-row:not(.has-sidecar) {
-  display: grid;
-  grid-template-columns: 1fr;
+  position: relative;
+  display: block;
 }
 
 .segment-row.has-sidecar {
-  display: grid;
-  grid-template-columns: 1fr var(--sidecar-width);
-  gap: 20px;
+  min-height: 150px;
 }
 
 .segment-row > .segment-card {
-  grid-column: 1;
   min-width: 0;
   width: 100%;
 }
 
+.segment-row.has-sidecar > .segment-card {
+  width: calc(100% - var(--comment-card-shrink));
+}
+
 .segment-row > .segment-sidecar {
-  grid-column: 2;
+  position: absolute;
+  top: 0;
+  left: 100%;
+  width: var(--sidecar-width);
 }
 
 .segment-card {
@@ -1455,6 +1510,10 @@ button:disabled { cursor: default; }
   background:
     linear-gradient(180deg, rgba(94 151 255 / 0.22), rgba(255 255 255 / 0.045)),
     rgba(16 29 50 / 0.44);
+}
+
+.segment-row.has-sidecar .segment-card.is-selected {
+  min-height: 122px;
 }
 
 .segment-text {
@@ -1507,16 +1566,31 @@ button:disabled { cursor: default; }
 
   .transcript-stage {
     width: min(calc(100% - 28px), 760px);
+    margin-left: auto;
+    margin-right: auto;
+    --sidecar-width: 260px;
+    --comment-card-shrink: 0px;
   }
 
   .segment-row.has-sidecar {
-    grid-template-columns: 1fr;
-    gap: 8px;
+    min-height: 0;
   }
 
   .segment-row > .segment-sidecar {
-    grid-column: 1;
+    position: relative;
+    top: auto;
+    left: auto;
     width: 100%;
+    margin-top: 8px;
+  }
+
+  .segment-row.has-sidecar > .segment-card {
+    width: 100%;
+  }
+
+  .segment-sidecar::before,
+  .segment-sidecar::after {
+    display: none;
   }
 }
 

@@ -294,16 +294,36 @@ function CommentComposer({ segmentId }: { segmentId: string }) {
 function SegmentComments({ segment }: { segment: TranscriptSegmentView }) {
   return (
     <div className="comment-card comment-thread">
-      <div className="comment-card-title">Comments</div>
       <div className="comment-list">
         {segment.comments.map((comment) => (
           <div className="comment-item" key={comment.id}>
-            {comment.comment_text}
+            <div className="comment-item-header">
+              <span className="comment-avatar">
+                {(comment.author_name ?? "C").trim().charAt(0).toUpperCase()}
+              </span>
+              <span className="comment-author">{comment.author_name ?? "Comment"}</span>
+              <span className="comment-menu">...</span>
+            </div>
+            <div className="comment-body">{comment.comment_text}</div>
+            <div className="comment-time">{formatCommentTime(comment.created_at)}</div>
           </div>
         ))}
       </div>
     </div>
   );
+}
+
+function formatCommentTime(createdAt?: string) {
+  if (!createdAt) return "just now";
+
+  const created = new Date(createdAt).getTime();
+  if (Number.isNaN(created)) return "just now";
+
+  const elapsedMinutes = Math.max(1, Math.round((Date.now() - created) / 60000));
+  if (elapsedMinutes < 60) return `${elapsedMinutes} min ago`;
+
+  const elapsedHours = Math.round(elapsedMinutes / 60);
+  return `${elapsedHours}h ago`;
 }
 
 // ----------------------------------------------------------------

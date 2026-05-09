@@ -121,6 +121,8 @@ export interface TranscriptCommentPayload {
   anchor_end: number | null;
   /** anchor の基準となった revision（raw_text 基準なら null） */
   anchor_revision_id: string | null;
+  /** 作成時刻（REST 復元時のみ存在する場合がある） */
+  created_at?: string;
 }
 
 /**

@@ -233,6 +233,7 @@ export const useTranscriptStore = create<TranscriptState>((set) => ({
             anchor_start: c.anchor_start,
             anchor_end: c.anchor_end,
             anchor_revision_id: c.anchor_revision_id,
+            created_at: c.created_at,
           })),
           highlights: (res.highlights ?? []).map((h) => ({
             id: h.id,
