@@ -11,7 +11,7 @@
 //   - 途中結果インジケーター（is_partial=true の場合）
 //   - コメント数・ハイライト数
 //
-// 後続 PR で追加予定:
+// 操作ボタン:
 //   - 編集ボタン → TranscriptEditor 起動
 //   - コメントボタン → CommentPanel 表示
 //   - ハイライトボタン → HighlightToolbar 表示
@@ -19,6 +19,9 @@
 
 import { useState } from "react";
 import type { TranscriptSegmentView } from "../types";
+import { TranscriptEditor } from "./TranscriptEditor";
+import { CommentPanel } from "./CommentPanel";
+import { HighlightToolbar } from "./HighlightToolbar";
 
 // =============================================================================
 // Props 型定義
@@ -40,6 +43,15 @@ interface TranscriptSegmentProps {
 export function TranscriptSegment({ segment }: TranscriptSegmentProps) {
   // 元テキストの展開状態（revision がある場合のみ使用）
   const [showRawText, setShowRawText] = useState(false);
+
+  // 編集モードの状態（true のとき TranscriptEditor を表示する）
+  const [isEditing, setIsEditing] = useState(false);
+
+  // コメントパネルの表示状態（true のとき CommentPanel を表示する）
+  const [showComments, setShowComments] = useState(false);
+
+  // ハイライトツールバーの表示状態（true のとき HighlightToolbar を表示する）
+  const [showHighlights, setShowHighlights] = useState(false);
 
   // revision が存在するかどうか（display_text が raw_text と異なるか）
   const hasRevision = segment.revisions.length > 0;
@@ -109,6 +121,15 @@ export function TranscriptSegment({ segment }: TranscriptSegmentProps) {
         {segment.displayText}
       </p>
 
+      {/* --- インラインエディター（編集モード時のみ表示） --- */}
+      {isEditing && (
+        <TranscriptEditor
+          segmentId={segment.id}
+          currentText={segment.displayText}
+          onClose={() => setIsEditing(false)}
+        />
+      )}
+
       {/* --- 元テキスト（revision がある場合のみ表示） --- */}
       {hasRevision && (
         <div style={{ marginTop: "0.25rem" }}>
@@ -155,21 +176,82 @@ export function TranscriptSegment({ segment }: TranscriptSegmentProps) {
           color: "#9ca3af",
         }}
       >
-        {/* コメント数 */}
-        {commentCount > 0 && (
-          <span>💬 {commentCount}</span>
+        {/* 編集ボタン: クリックで TranscriptEditor を表示する */}
+        {!isEditing && (
+          <button
+            onClick={() => setIsEditing(true)}
+            style={{
+              background: "none",
+              border: "1px solid #d1d5db",
+              borderRadius: "4px",
+              padding: "0.15rem 0.5rem",
+              fontSize: "0.75rem",
+              color: "#6b7280",
+              cursor: "pointer",
+            }}
+            title="テキストを編集"
+          >
+            ✏️ 編集
+          </button>
         )}
 
-        {/* ハイライト数 */}
-        {highlightCount > 0 && (
-          <span>🔆 {highlightCount}</span>
-        )}
+        {/* コメントボタン: クリックで CommentPanel を表示/非表示する */}
+        <button
+          onClick={() => setShowComments(!showComments)}
+          style={{
+            background: "none",
+            border: "1px solid #d1d5db",
+            borderRadius: "4px",
+            padding: "0.15rem 0.5rem",
+            fontSize: "0.75rem",
+            color: showComments ? "#f59e0b" : "#6b7280",
+            cursor: "pointer",
+          }}
+          title="コメントを表示/追加"
+        >
+          💬 {commentCount > 0 ? commentCount : "コメント"}
+        </button>
+
+        {/* ハイライトボタン: クリックで HighlightToolbar を表示/非表示する */}
+        <button
+          onClick={() => setShowHighlights(!showHighlights)}
+          style={{
+            background: "none",
+            border: "1px solid #d1d5db",
+            borderRadius: "4px",
+            padding: "0.15rem 0.5rem",
+            fontSize: "0.75rem",
+            color: showHighlights ? "#8b5cf6" : "#6b7280",
+            cursor: "pointer",
+          }}
+          title="ハイライトを表示/追加"
+        >
+          🔆 {highlightCount > 0 ? highlightCount : "ハイライト"}
+        </button>
 
         {/* revision 数 */}
         {hasRevision && (
           <span>✏️ v{segment.revisions.length}</span>
         )}
       </div>
+
+      {/* --- コメントパネル（showComments が true のとき表示） --- */}
+      {showComments && (
+        <CommentPanel
+          segmentId={segment.id}
+          comments={segment.comments}
+          onClose={() => setShowComments(false)}
+        />
+      )}
+
+      {/* --- ハイライトツールバー（showHighlights が true のとき表示） --- */}
+      {showHighlights && (
+        <HighlightToolbar
+          segmentId={segment.id}
+          highlights={segment.highlights}
+          onClose={() => setShowHighlights(false)}
+        />
+      )}
     </div>
   );
 }

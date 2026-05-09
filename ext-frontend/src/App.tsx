@@ -7,11 +7,9 @@
 // コンポーネント構成:
 //   - ConnectionStatusBar: WebSocket 接続状態の表示
 //   - TranscriptViewer: リアルタイム文字起こし一覧
-//
-// 後続 PR で以下のコンポーネントを追加予定:
-//   - TranscriptEditor: セグメント編集 UI
-//   - CommentPanel: コメント追加 UI
-//   - HighlightToolbar: ハイライト追加 UI
+//   - TranscriptEditor: セグメント編集 UI（TranscriptSegment 内で表示）
+//   - CommentPanel: コメント追加 UI（TranscriptSegment 内で表示）
+//   - HighlightToolbar: ハイライト追加 UI（TranscriptSegment 内で表示）
 // =============================================================================
 
 import { useEffect, useRef } from "react";

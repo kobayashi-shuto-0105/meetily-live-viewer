@@ -200,6 +200,9 @@ export const useTranscriptStore = create<TranscriptState>((set) => ({
       // 対象セグメントが存在しない場合は何もしない
       if (!segment) return state;
 
+      // 同じリビジョン ID が既に存在する場合はスキップ（重複防止）
+      if (segment.revisions.some((r) => r.id === payload.id)) return state;
+
       // revision を追加し、displayText を最新の revision テキストに更新する
       const updatedSegment: TranscriptSegmentView = {
         ...segment,
@@ -208,7 +211,9 @@ export const useTranscriptStore = create<TranscriptState>((set) => ({
       };
 
       newSegments.set(payload.external_segment_id, updatedSegment);
-      return { segments: newSegments };
+      // segments と sortedSegments の両方を更新する
+      // （sortedSegments を更新しないと UI の selectSortedSegments が変更を検知できない）
+      return { segments: newSegments, sortedSegments: toSortedArray(newSegments) };
     }),
 
   addComment: (payload) =>
@@ -219,13 +224,18 @@ export const useTranscriptStore = create<TranscriptState>((set) => ({
       // 対象セグメントが存在しない場合は何もしない
       if (!segment) return state;
 
+      // 同じコメント ID が既に存在する場合はスキップ（重複防止）
+      if (segment.comments.some((c) => c.id === payload.id)) return state;
+
       const updatedSegment: TranscriptSegmentView = {
         ...segment,
         comments: [...segment.comments, payload],
       };
 
       newSegments.set(payload.external_segment_id, updatedSegment);
-      return { segments: newSegments };
+      // segments と sortedSegments の両方を更新する
+      // （sortedSegments を更新しないと UI の selectSortedSegments が変更を検知できない）
+      return { segments: newSegments, sortedSegments: toSortedArray(newSegments) };
     }),
 
   addHighlight: (payload) =>
@@ -236,13 +246,18 @@ export const useTranscriptStore = create<TranscriptState>((set) => ({
       // 対象セグメントが存在しない場合は何もしない
       if (!segment) return state;
 
+      // 同じハイライト ID が既に存在する場合はスキップ（重複防止）
+      if (segment.highlights.some((h) => h.id === payload.id)) return state;
+
       const updatedSegment: TranscriptSegmentView = {
         ...segment,
         highlights: [...segment.highlights, payload],
       };
 
       newSegments.set(payload.external_segment_id, updatedSegment);
-      return { segments: newSegments };
+      // segments と sortedSegments の両方を更新する
+      // （sortedSegments を更新しないと UI の selectSortedSegments が変更を検知できない）
+      return { segments: newSegments, sortedSegments: toSortedArray(newSegments) };
     }),
 
   // -------------------------------------------------------------------------
