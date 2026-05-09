@@ -208,7 +208,9 @@ export const useTranscriptStore = create<TranscriptState>((set) => ({
       };
 
       newSegments.set(payload.external_segment_id, updatedSegment);
-      return { segments: newSegments };
+      // segments と sortedSegments の両方を更新する
+      // （sortedSegments を更新しないと UI の selectSortedSegments が変更を検知できない）
+      return { segments: newSegments, sortedSegments: toSortedArray(newSegments) };
     }),
 
   addComment: (payload) =>
@@ -225,7 +227,9 @@ export const useTranscriptStore = create<TranscriptState>((set) => ({
       };
 
       newSegments.set(payload.external_segment_id, updatedSegment);
-      return { segments: newSegments };
+      // segments と sortedSegments の両方を更新する
+      // （sortedSegments を更新しないと UI の selectSortedSegments が変更を検知できない）
+      return { segments: newSegments, sortedSegments: toSortedArray(newSegments) };
     }),
 
   addHighlight: (payload) =>
@@ -242,7 +246,9 @@ export const useTranscriptStore = create<TranscriptState>((set) => ({
       };
 
       newSegments.set(payload.external_segment_id, updatedSegment);
-      return { segments: newSegments };
+      // segments と sortedSegments の両方を更新する
+      // （sortedSegments を更新しないと UI の selectSortedSegments が変更を検知できない）
+      return { segments: newSegments, sortedSegments: toSortedArray(newSegments) };
     }),
 
   // -------------------------------------------------------------------------
