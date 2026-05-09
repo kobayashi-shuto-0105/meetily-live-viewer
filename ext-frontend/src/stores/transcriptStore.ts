@@ -1,20 +1,3 @@
-// =============================================================================
-// 文字起こしストア（Zustand）
-// =============================================================================
-// リアルタイム文字起こしの状態管理を行う Zustand ストア。
-//
-// 責務:
-//   - WebSocket イベントに応じたセグメントの追加・更新（upsert）
-//   - revision / comment / highlight の追加反映
-//   - 接続状態とセッション情報の管理
-//   - REST API から取得した既存セグメントの読み込み
-//
-// 設計方針:
-//   - セグメントは Map<id, TranscriptSegmentView> で管理し、O(1) のルックアップを実現
-//   - 表示順は sequence_id 昇順でソートした配列を computed で返す
-//   - WebSocket イベント受信時に直接ストアを更新する（楽観的 UI）
-// =============================================================================
-
 import { create } from "zustand";
 
 import type {
@@ -28,80 +11,49 @@ import type {
   TranscriptSegmentResponse,
 } from "../types";
 
-// =============================================================================
-// ストアの型定義
-// =============================================================================
+// ----------------------------------------------------------------
+// State shape
+// ----------------------------------------------------------------
 
-/** ストアの状態 */
 interface TranscriptState {
-  // --- 接続・セッション状態 ---
-
-  /** WebSocket の接続状態 */
   connectionStatus: ConnectionStatus;
-
-  /** 現在の録音セッション情報（録音中のみ） */
   session: SessionInfo | null;
-
-  // --- セグメントデータ ---
-
-  /** セグメントの Map（id → TranscriptSegmentView） */
   segments: Map<string, TranscriptSegmentView>;
-
-  /**
-   * sequence_id 昇順でソート済みのセグメント配列。
-   * segments と同期して更新される。セレクターから同じ参照を返すことで
-   * connectionStatus 等の無関係な状態変化による再レンダリングを防ぐ。
-   */
   sortedSegments: TranscriptSegmentView[];
 
-  // --- アクション ---
+  /** ID of the segment currently focused by the user (click-to-select) */
+  selectedSegmentId: string | null;
 
-  /** WebSocket 接続状態を更新する */
+  /**
+   * Incremented whenever the user presses ⌘+Enter on a selected segment.
+   * The bottom comment input watches this value and auto-focuses.
+   */
+  commentInputTrigger: number;
+
+  // --- actions ---
   setConnectionStatus: (status: ConnectionStatus) => void;
-
-  /** 録音開始時にセッション情報をセットする */
-  startSession: (
-    sessionId: string,
-    meetingTitle: string | null,
-    startedAt: string
-  ) => void;
-
-  /** 録音停止時にセッション情報を更新する */
+  startSession: (sessionId: string, meetingTitle: string | null, startedAt: string) => void;
   stopSession: () => void;
-
-  /** meeting_id 確定時にセッション情報を更新する */
   setMeetingId: (sessionId: string, meetingId: string) => void;
 
-  /**
-   * セグメントを upsert する（WebSocket TranscriptSegmentUpserted 用）。
-   * 既存セグメントがあれば更新、なければ新規追加する。
-   */
+  /** Restore a session without clearing existing segments. */
+  restoreSession: (sessionId: string, meetingTitle: string | null, startedAt: string) => void;
+
   upsertSegment: (payload: TranscriptSegmentPayload) => void;
-
-  /** revision を追加し、対象セグメントの displayText を更新する */
   addRevision: (payload: TranscriptRevisionPayload) => void;
-
-  /** comment を追加する */
   addComment: (payload: TranscriptCommentPayload) => void;
-
-  /** highlight を追加する */
   addHighlight: (payload: TranscriptHighlightPayload) => void;
-
-  /**
-   * REST API レスポンスからセグメントを一括読み込みする。
-   * 既存のセグメントはクリアされる。
-   */
   loadSegments: (responses: TranscriptSegmentResponse[]) => void;
-
-  /** 全セグメントをクリアする */
   clearSegments: () => void;
+
+  setSelectedSegmentId: (id: string | null) => void;
+  triggerCommentInput: () => void;
 }
 
-// =============================================================================
-// ストア生成
-// =============================================================================
+// ----------------------------------------------------------------
+// Helpers
+// ----------------------------------------------------------------
 
-/** segments Map から sequence_id 昇順のソート済み配列を生成する */
 function toSortedArray(
   segments: Map<string, TranscriptSegmentView>
 ): TranscriptSegmentView[] {
@@ -110,62 +62,53 @@ function toSortedArray(
   );
 }
 
+// ----------------------------------------------------------------
+// Store
+// ----------------------------------------------------------------
+
 export const useTranscriptStore = create<TranscriptState>((set) => ({
-  // --- 初期状態 ---
   connectionStatus: "disconnected",
   session: null,
   segments: new Map(),
   sortedSegments: [],
-
-  // -------------------------------------------------------------------------
-  // 接続状態
-  // -------------------------------------------------------------------------
+  selectedSegmentId: null,
+  commentInputTrigger: 0,
 
   setConnectionStatus: (status) => set({ connectionStatus: status }),
 
-  // -------------------------------------------------------------------------
-  // セッション管理
-  // -------------------------------------------------------------------------
-
   startSession: (sessionId, meetingTitle, startedAt) =>
     set({
+      session: { sessionId, meetingTitle, startedAt, isStopped: false, meetingId: null },
+      segments: new Map(),
+      sortedSegments: [],
+      selectedSegmentId: null,
+    }),
+
+  stopSession: () =>
+    set((state) => ({
+      session: state.session ? { ...state.session, isStopped: true } : null,
+    })),
+
+  setMeetingId: (sessionId, meetingId) =>
+    set((state) => {
+      if (state.session?.sessionId !== sessionId) return state;
+      return { session: { ...state.session, meetingId } };
+    }),
+
+  restoreSession: (sessionId, meetingTitle, startedAt) =>
+    set((state) => ({
       session: {
         sessionId,
         meetingTitle,
         startedAt,
         isStopped: false,
-        meetingId: null,
+        meetingId: state.session?.meetingId ?? null,
       },
-      // 新しいセッション開始時に前のセグメントをクリアする
-      segments: new Map(),
-      sortedSegments: [],
-    }),
-
-  stopSession: () =>
-    set((state) => ({
-      session: state.session
-        ? { ...state.session, isStopped: true }
-        : null,
     })),
-
-  setMeetingId: (sessionId, meetingId) =>
-    set((state) => {
-      // セッション ID が一致する場合のみ meeting_id を更新する
-      if (state.session?.sessionId !== sessionId) return state;
-      return {
-        session: { ...state.session, meetingId },
-      };
-    }),
-
-  // -------------------------------------------------------------------------
-  // セグメント操作
-  // -------------------------------------------------------------------------
 
   upsertSegment: (payload) =>
     set((state) => {
       const newSegments = new Map(state.segments);
-
-      // 既存セグメントを取得し、revisions/comments/highlights を引き継ぐ
       const existing = newSegments.get(payload.id);
 
       const view: TranscriptSegmentView = {
@@ -182,7 +125,6 @@ export const useTranscriptStore = create<TranscriptState>((set) => ({
         audioStartTime: payload.audio_start_time,
         audioEndTime: payload.audio_end_time,
         duration: payload.duration,
-        // 既存の overlay データを引き継ぐ
         revisions: existing?.revisions ?? [],
         comments: existing?.comments ?? [],
         highlights: existing?.highlights ?? [],
@@ -196,14 +138,9 @@ export const useTranscriptStore = create<TranscriptState>((set) => ({
     set((state) => {
       const newSegments = new Map(state.segments);
       const segment = newSegments.get(payload.external_segment_id);
-
-      // 対象セグメントが存在しない場合は何もしない
       if (!segment) return state;
-
-      // 同じリビジョン ID が既に存在する場合はスキップ（重複防止）
       if (segment.revisions.some((r) => r.id === payload.id)) return state;
 
-      // revision を追加し、displayText を最新の revision テキストに更新する
       const updatedSegment: TranscriptSegmentView = {
         ...segment,
         displayText: payload.edited_text,
@@ -211,8 +148,6 @@ export const useTranscriptStore = create<TranscriptState>((set) => ({
       };
 
       newSegments.set(payload.external_segment_id, updatedSegment);
-      // segments と sortedSegments の両方を更新する
-      // （sortedSegments を更新しないと UI の selectSortedSegments が変更を検知できない）
       return { segments: newSegments, sortedSegments: toSortedArray(newSegments) };
     }),
 
@@ -220,11 +155,7 @@ export const useTranscriptStore = create<TranscriptState>((set) => ({
     set((state) => {
       const newSegments = new Map(state.segments);
       const segment = newSegments.get(payload.external_segment_id);
-
-      // 対象セグメントが存在しない場合は何もしない
       if (!segment) return state;
-
-      // 同じコメント ID が既に存在する場合はスキップ（重複防止）
       if (segment.comments.some((c) => c.id === payload.id)) return state;
 
       const updatedSegment: TranscriptSegmentView = {
@@ -233,8 +164,6 @@ export const useTranscriptStore = create<TranscriptState>((set) => ({
       };
 
       newSegments.set(payload.external_segment_id, updatedSegment);
-      // segments と sortedSegments の両方を更新する
-      // （sortedSegments を更新しないと UI の selectSortedSegments が変更を検知できない）
       return { segments: newSegments, sortedSegments: toSortedArray(newSegments) };
     }),
 
@@ -242,11 +171,7 @@ export const useTranscriptStore = create<TranscriptState>((set) => ({
     set((state) => {
       const newSegments = new Map(state.segments);
       const segment = newSegments.get(payload.external_segment_id);
-
-      // 対象セグメントが存在しない場合は何もしない
       if (!segment) return state;
-
-      // 同じハイライト ID が既に存在する場合はスキップ（重複防止）
       if (segment.highlights.some((h) => h.id === payload.id)) return state;
 
       const updatedSegment: TranscriptSegmentView = {
@@ -255,21 +180,14 @@ export const useTranscriptStore = create<TranscriptState>((set) => ({
       };
 
       newSegments.set(payload.external_segment_id, updatedSegment);
-      // segments と sortedSegments の両方を更新する
-      // （sortedSegments を更新しないと UI の selectSortedSegments が変更を検知できない）
       return { segments: newSegments, sortedSegments: toSortedArray(newSegments) };
     }),
-
-  // -------------------------------------------------------------------------
-  // 一括操作
-  // -------------------------------------------------------------------------
 
   loadSegments: (responses) =>
     set(() => {
       const newSegments = new Map<string, TranscriptSegmentView>();
 
       for (const res of responses) {
-        // REST API レスポンス（snake_case）を UI 用の型（camelCase）に変換する
         const view: TranscriptSegmentView = {
           id: res.id,
           sessionId: res.session_id,
@@ -284,7 +202,6 @@ export const useTranscriptStore = create<TranscriptState>((set) => ({
           audioStartTime: res.audio_start_time ?? 0,
           audioEndTime: res.audio_end_time ?? 0,
           duration: res.duration ?? 0,
-          // REST レスポンスの overlay データを変換する
           revisions: res.revisions.map((r) => ({
             id: r.id,
             external_segment_id: r.external_segment_id,
@@ -317,22 +234,18 @@ export const useTranscriptStore = create<TranscriptState>((set) => ({
       return { segments: newSegments, sortedSegments: toSortedArray(newSegments) };
     }),
 
-  clearSegments: () => set({ segments: new Map(), sortedSegments: [] }),
+  clearSegments: () => set({ segments: new Map(), sortedSegments: [], selectedSegmentId: null }),
+
+  setSelectedSegmentId: (id) => set({ selectedSegmentId: id }),
+
+  triggerCommentInput: () =>
+    set((state) => ({ commentInputTrigger: state.commentInputTrigger + 1 })),
 }));
 
-// =============================================================================
-// セレクター（パフォーマンス最適化用）
-// =============================================================================
+// ----------------------------------------------------------------
+// Selectors
+// ----------------------------------------------------------------
 
-/**
- * sequence_id 昇順でソート済みのセグメント配列を返すセレクター。
- * ストアが sortedSegments を同期管理するため、毎回の sort コストなしに
- * 安定した参照を返す。connectionStatus 等の無関係な状態変化では
- * 参照が変わらないためコンポーネントの再レンダリングを防ぐ。
- *
- * コンポーネントで使用する:
- *   const segments = useTranscriptStore(selectSortedSegments);
- */
 export const selectSortedSegments = (
   state: TranscriptState
 ): TranscriptSegmentView[] => state.sortedSegments;

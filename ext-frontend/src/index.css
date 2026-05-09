@@ -1,4 +1,113 @@
+/* ============================================================
+   Meetily – Theme System (CSS Custom Properties)
+   To create a custom theme, override any variable on :root
+   or under [data-theme="my-theme"] in your own stylesheet.
+   ============================================================ */
+
+/* --- Dark theme (default) ---------------------------------- */
+:root,
+[data-theme="dark"] {
+  --bg-app:      #0f1117;
+  --bg-surface:  #161825;
+  --bg-surface2: #1e2032;
+  --bg-hover:    rgba(255 255 255 / 0.035);
+  --bg-selected: rgba(99 130 246 / 0.10);
+
+  --border-subtle: rgba(255 255 255 / 0.055);
+  --border:        rgba(255 255 255 / 0.10);
+
+  --text-1: #dde0ec;
+  --text-2: #7c82a0;
+  --text-3: #4a5068;
+
+  --accent:     #6382f6;
+  --accent-alt: #7a98ff;
+  --accent-dim: rgba(99 130 246 / 0.15);
+
+  --todo-color: #f59e0b;
+  --todo-bg:    rgba(245 158 11 / 0.10);
+  --fixme-color: #ef4444;
+  --fixme-bg:   rgba(239 68 68 / 0.10);
+
+  --ok:   #10b981;
+  --warn: #f59e0b;
+  --err:  #ef4444;
+
+  --shadow: 0 2px 12px rgba(0 0 0 / 0.4);
+}
+
+/* --- Light theme ------------------------------------------- */
+[data-theme="light"] {
+  --bg-app:      #f1f3f9;
+  --bg-surface:  #ffffff;
+  --bg-surface2: #f5f7fc;
+  --bg-hover:    rgba(0 0 0 / 0.025);
+  --bg-selected: rgba(74 111 212 / 0.07);
+
+  --border-subtle: rgba(0 0 0 / 0.048);
+  --border:        rgba(0 0 0 / 0.10);
+
+  --text-1: #1a1d2e;
+  --text-2: #555c72;
+  --text-3: #8890a4;
+
+  --accent:     #4a6fd4;
+  --accent-alt: #3a5fc4;
+  --accent-dim: rgba(74 111 212 / 0.10);
+
+  --todo-color: #d97706;
+  --todo-bg:    rgba(217 119 6 / 0.07);
+  --fixme-color: #dc2626;
+  --fixme-bg:   rgba(220 38 38 / 0.06);
+
+  --ok:   #059669;
+  --warn: #d97706;
+  --err:  #dc2626;
+
+  --shadow: 0 2px 12px rgba(0 0 0 / 0.08);
+}
+
+/* --- Reset & base ------------------------------------------ */
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body, #root {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  background: var(--bg-app);
+  color: var(--text-1);
+}
+
+button, input, textarea, select {
+  font-family: inherit;
+  font-size: inherit;
+}
+
+button { cursor: pointer; }
+
+/* --- Scrollbar -------------------------------------------- */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 2px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-3);
+}
+
+/* --- Animations -------------------------------------------- */
 @keyframes pulse {
   0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
+  50%       { opacity: 0.3; }
+}
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
 }

@@ -1,106 +1,120 @@
-// =============================================================================
-// External Web UI メインアプリケーション
-// =============================================================================
-// Meetily の文字起こしをリアルタイムで閲覧・編集するための Web UI。
-// WebSocket でリアルタイム更新を受信し、REST API で編集操作を行う。
-//
-// コンポーネント構成:
-//   - ConnectionStatusBar: WebSocket 接続状態の表示
-//   - TranscriptViewer: リアルタイム文字起こし一覧
-//   - TranscriptEditor: セグメント編集 UI（TranscriptSegment 内で表示）
-//   - CommentPanel: コメント追加 UI（TranscriptSegment 内で表示）
-//   - HighlightToolbar: ハイライト追加 UI（TranscriptSegment 内で表示）
-// =============================================================================
-
-import { useEffect, useRef } from "react";
-import { ConnectionStatusBar } from "./components/ConnectionStatusBar";
-import { TranscriptViewer } from "./components/TranscriptViewer";
+import { useEffect, useRef, useState } from "react";
 import { createWebSocketClient } from "./api/ws";
 import type { WebSocketClient } from "./api/ws";
+import { apiClient } from "./api/client";
 import { useTranscriptStore } from "./stores/transcriptStore";
+import { TranscriptViewer } from "./components/TranscriptViewer";
+import type { SessionInfo } from "./types";
+
+// ----------------------------------------------------------------
+// Theme helpers
+// ----------------------------------------------------------------
+
+type Theme = "dark" | "light";
+
+function loadTheme(): Theme {
+  return (localStorage.getItem("meetily-theme") as Theme) ?? "dark";
+}
+
+function applyTheme(theme: Theme) {
+  document.documentElement.setAttribute("data-theme", theme);
+  localStorage.setItem("meetily-theme", theme);
+}
+
+// ----------------------------------------------------------------
+// App
+// ----------------------------------------------------------------
 
 function App() {
-  // WebSocket クライアントの参照を保持する（再レンダリングで再生成しないため）
+  const [theme, setTheme] = useState<Theme>(loadTheme);
+
   const wsRef = useRef<WebSocketClient | null>(null);
 
-  // Zustand ストアのアクションを取得する
-  const setConnectionStatus = useTranscriptStore(
-    (state) => state.setConnectionStatus
-  );
-  const upsertSegment = useTranscriptStore((state) => state.upsertSegment);
-  const addRevision = useTranscriptStore((state) => state.addRevision);
-  const addComment = useTranscriptStore((state) => state.addComment);
-  const addHighlight = useTranscriptStore((state) => state.addHighlight);
-  const startSession = useTranscriptStore((state) => state.startSession);
-  const stopSession = useTranscriptStore((state) => state.stopSession);
-  const setMeetingId = useTranscriptStore((state) => state.setMeetingId);
+  const {
+    setConnectionStatus,
+    upsertSegment,
+    addRevision,
+    addComment,
+    addHighlight,
+    startSession,
+    stopSession,
+    setMeetingId,
+    restoreSession,
+    loadSegments,
+    session,
+  } = useTranscriptStore();
 
-  // マウント時に WebSocket 接続を開始し、アンマウント時に切断する
+  // Apply theme to <html data-theme>
+  useEffect(() => {
+    applyTheme(theme);
+  }, [theme]);
+
+  // Restore existing session + segments on first load
+  useEffect(() => {
+    async function initialLoad() {
+      try {
+        const current = await apiClient.getCurrentSession();
+        if (!current) return;
+        restoreSession(current.session_id, current.meeting_title, current.started_at);
+        const segments = await apiClient.getSessionTranscripts(current.session_id);
+        loadSegments(segments);
+      } catch {
+        // Server may not be running yet — WebSocket will handle live data
+      }
+    }
+    initialLoad();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // WebSocket connection
   useEffect(() => {
     const ws = createWebSocketClient({
-      // --- WebSocket イベントの処理 ---
       onEvent: (event) => {
         switch (event.type) {
           case "RecordingStarted":
-            // 録音開始: セッション情報をストアにセットする
             startSession(
               event.payload.session_id,
               event.payload.meeting_title,
               event.payload.started_at
             );
             break;
-
           case "RecordingStopped":
-            // 録音停止: セッション状態を更新する
             stopSession();
             break;
-
           case "MeetingPersisted":
-            // meeting_id 確定: セッションに meeting_id を紐付ける
-            setMeetingId(
-              event.payload.session_id,
-              event.payload.meeting_id
-            );
+            setMeetingId(event.payload.session_id, event.payload.meeting_id);
             break;
-
           case "TranscriptSegmentUpserted":
-            // セグメント追加/更新: ストアに upsert する
             upsertSegment(event.payload);
             break;
-
           case "TranscriptRevisionCreated":
-            // revision 作成: 対象セグメントの displayText を更新する
             addRevision(event.payload);
             break;
-
           case "TranscriptCommentCreated":
-            // コメント追加: 対象セグメントに追加する
             addComment(event.payload);
             break;
-
           case "TranscriptHighlightCreated":
-            // ハイライト追加: 対象セグメントに追加する
             addHighlight(event.payload);
             break;
         }
       },
-
-      // --- 接続状態の変更をストアに反映する ---
-      onStatusChange: (status) => {
-        setConnectionStatus(status);
-      },
+      onStatusChange: setConnectionStatus,
     });
 
     wsRef.current = ws;
     ws.connect();
 
-    // アンマウント時に WebSocket 接続を切断する
     return () => {
       ws.disconnect();
       wsRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // マウント時のみ実行する（ストアのアクションは安定した参照）
+  }, []);
+
+  const toggleTheme = () =>
+    setTheme((t) => (t === "dark" ? "light" : "dark"));
+
+  const title = session?.meetingTitle ?? "Meetily";
 
   return (
     <div
@@ -108,35 +122,123 @@ function App() {
         display: "flex",
         flexDirection: "column",
         height: "100vh",
-        fontFamily:
-          '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+        background: "var(--bg-app)",
+        color: "var(--text-1)",
       }}
     >
-      {/* --- ヘッダー --- */}
+      {/* ── Header ─────────────────────────────────────────── */}
       <header
         style={{
-          padding: "0.75rem 1rem",
-          borderBottom: "1px solid #e5e7eb",
-          backgroundColor: "#fff",
+          display: "flex",
+          alignItems: "center",
+          gap: "0.75rem",
+          padding: "0 1.25rem",
+          height: "52px",
+          background: "var(--bg-surface)",
+          borderBottom: "1px solid var(--border-subtle)",
+          flexShrink: 0,
         }}
       >
-        <h1
+        {/* Recording indicator dot */}
+        <RecordingDot session={session} />
+
+        {/* Meeting title */}
+        <span
           style={{
-            margin: 0,
-            fontSize: "1.25rem",
             fontWeight: 600,
+            fontSize: "0.95rem",
+            color: "var(--text-1)",
+            flex: 1,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
           }}
         >
-          Meetily External Web UI
-        </h1>
+          {title}
+        </span>
+
+        {/* Connection status badge */}
+        <ConnectionBadge />
+
+        {/* Theme toggle */}
+        <button
+          onClick={toggleTheme}
+          title={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}
+          style={{
+            background: "none",
+            border: "1px solid var(--border)",
+            borderRadius: "6px",
+            color: "var(--text-2)",
+            padding: "0.3rem 0.5rem",
+            fontSize: "0.8rem",
+            lineHeight: 1,
+          }}
+        >
+          {theme === "dark" ? "☀" : "☾"}
+        </button>
       </header>
 
-      {/* --- 接続状態バー --- */}
-      <ConnectionStatusBar />
-
-      {/* --- メインコンテンツ: 文字起こし一覧 --- */}
+      {/* ── Main content ────────────────────────────────────── */}
       <TranscriptViewer />
     </div>
+  );
+}
+
+// ----------------------------------------------------------------
+// Sub-components
+// ----------------------------------------------------------------
+
+function RecordingDot({ session }: { session: SessionInfo | null }) {
+  if (!session) return null;
+  const isRecording = !session.isStopped;
+  return (
+    <span
+      style={{
+        width: "8px",
+        height: "8px",
+        borderRadius: "50%",
+        flexShrink: 0,
+        background: isRecording ? "var(--err)" : "var(--text-3)",
+        animation: isRecording ? "pulse 1.5s ease-in-out infinite" : undefined,
+      }}
+    />
+  );
+}
+
+function ConnectionBadge() {
+  const status = useTranscriptStore((s) => s.connectionStatus);
+
+  const MAP = {
+    connected:    { label: "Live",         color: "var(--ok)" },
+    connecting:   { label: "Connecting…",  color: "var(--warn)" },
+    disconnected: { label: "Disconnected", color: "var(--err)" },
+    error:        { label: "Error",        color: "var(--err)" },
+  } as const;
+
+  const { label, color } = MAP[status];
+
+  return (
+    <span
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: "0.35rem",
+        fontSize: "0.75rem",
+        color,
+        fontWeight: 500,
+      }}
+    >
+      <span
+        style={{
+          width: "6px",
+          height: "6px",
+          borderRadius: "50%",
+          background: color,
+          animation: status === "connecting" ? "pulse 1.2s ease-in-out infinite" : undefined,
+        }}
+      />
+      {label}
+    </span>
   );
 }
 
