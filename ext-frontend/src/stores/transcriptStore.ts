@@ -47,6 +47,13 @@ interface TranscriptState {
   /** セグメントの Map（id → TranscriptSegmentView） */
   segments: Map<string, TranscriptSegmentView>;
 
+  /**
+   * sequence_id 昇順でソート済みのセグメント配列。
+   * segments と同期して更新される。セレクターから同じ参照を返すことで
+   * connectionStatus 等の無関係な状態変化による再レンダリングを防ぐ。
+   */
+  sortedSegments: TranscriptSegmentView[];
+
   // --- アクション ---
 
   /** WebSocket 接続状態を更新する */
@@ -94,11 +101,21 @@ interface TranscriptState {
 // ストア生成
 // =============================================================================
 
+/** segments Map から sequence_id 昇順のソート済み配列を生成する */
+function toSortedArray(
+  segments: Map<string, TranscriptSegmentView>
+): TranscriptSegmentView[] {
+  return Array.from(segments.values()).sort(
+    (a, b) => a.sequenceId - b.sequenceId
+  );
+}
+
 export const useTranscriptStore = create<TranscriptState>((set) => ({
   // --- 初期状態 ---
   connectionStatus: "disconnected",
   session: null,
   segments: new Map(),
+  sortedSegments: [],
 
   // -------------------------------------------------------------------------
   // 接続状態
@@ -121,6 +138,7 @@ export const useTranscriptStore = create<TranscriptState>((set) => ({
       },
       // 新しいセッション開始時に前のセグメントをクリアする
       segments: new Map(),
+      sortedSegments: [],
     }),
 
   stopSession: () =>
@@ -171,7 +189,7 @@ export const useTranscriptStore = create<TranscriptState>((set) => ({
       };
 
       newSegments.set(payload.id, view);
-      return { segments: newSegments };
+      return { segments: newSegments, sortedSegments: toSortedArray(newSegments) };
     }),
 
   addRevision: (payload) =>
@@ -281,10 +299,10 @@ export const useTranscriptStore = create<TranscriptState>((set) => ({
         newSegments.set(res.id, view);
       }
 
-      return { segments: newSegments };
+      return { segments: newSegments, sortedSegments: toSortedArray(newSegments) };
     }),
 
-  clearSegments: () => set({ segments: new Map() }),
+  clearSegments: () => set({ segments: new Map(), sortedSegments: [] }),
 }));
 
 // =============================================================================
@@ -292,14 +310,14 @@ export const useTranscriptStore = create<TranscriptState>((set) => ({
 // =============================================================================
 
 /**
- * セグメントを sequence_id 昇順でソートした配列を返すセレクター。
+ * sequence_id 昇順でソート済みのセグメント配列を返すセレクター。
+ * ストアが sortedSegments を同期管理するため、毎回の sort コストなしに
+ * 安定した参照を返す。connectionStatus 等の無関係な状態変化では
+ * 参照が変わらないためコンポーネントの再レンダリングを防ぐ。
+ *
  * コンポーネントで使用する:
  *   const segments = useTranscriptStore(selectSortedSegments);
  */
 export const selectSortedSegments = (
   state: TranscriptState
-): TranscriptSegmentView[] => {
-  return Array.from(state.segments.values()).sort(
-    (a, b) => a.sequenceId - b.sequenceId
-  );
-};
+): TranscriptSegmentView[] => state.sortedSegments;

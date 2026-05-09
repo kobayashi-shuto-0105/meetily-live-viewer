@@ -116,6 +116,8 @@ export function createWebSocketClient(
   function scheduleReconnect(): void {
     // 意図的な切断の場合は再接続しない
     if (intentionalDisconnect) return;
+    // 既にタイマーが起動中なら重複スケジュールしない
+    if (reconnectTimer) return;
 
     console.log(
       `[WebSocket] ${reconnectDelay}ms 後に再接続を試みます...`
@@ -139,8 +141,11 @@ export function createWebSocketClient(
 
   /** WebSocket 接続を実行する */
   function connectInternal(): void {
-    // 既存の接続があれば閉じる
+    // 既存の接続があれば閉じる。onclose を先にクリアして
+    // 旧ソケットのイベントが新接続の再接続ロジックを誤発火させないようにする。
     if (socket) {
+      socket.onclose = null;
+      socket.onerror = null;
       socket.close();
       socket = null;
     }

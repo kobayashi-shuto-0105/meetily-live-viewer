@@ -75,10 +75,12 @@ export function ConnectionStatusBar() {
         {config.label}
       </span>
 
-      {/* サーバー URL 表示（デバッグ用） */}
-      <span style={{ color: "#9ca3af", fontSize: "0.75rem", marginLeft: "auto" }}>
-        {import.meta.env.VITE_MEETILY_API_BASE}
-      </span>
+      {/* サーバー URL 表示（開発ビルドのみ） */}
+      {import.meta.env.DEV && (
+        <span style={{ color: "#9ca3af", fontSize: "0.75rem", marginLeft: "auto" }}>
+          {import.meta.env.VITE_MEETILY_API_BASE}
+        </span>
+      )}
     </div>
   );
 }
