@@ -1924,7 +1924,8 @@ button:disabled { cursor: default; }
   white-space: nowrap;
 }
 
-.section-insert-zone:hover .section-insert-btn {
+.section-insert-zone:hover .section-insert-btn,
+.section-insert-zone:focus-within .section-insert-btn {
   opacity: 1;
 }
 
@@ -1962,7 +1963,8 @@ button:disabled { cursor: default; }
   transition: background 0.18s ease;
 }
 
-.section-insert-zone:hover .section-insert-line {
+.section-insert-zone:hover .section-insert-line,
+.section-insert-zone:focus-within .section-insert-line {
   background: var(--border-subtle);
 }
 
@@ -2136,7 +2138,8 @@ button:disabled { cursor: default; }
   transition: opacity 0.15s ease;
 }
 
-.section-header:hover .section-header-actions {
+.section-header:hover .section-header-actions,
+.section-header:focus-within .section-header-actions {
   opacity: 1;
 }
 

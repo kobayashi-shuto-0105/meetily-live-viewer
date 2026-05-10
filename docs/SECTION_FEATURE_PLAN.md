@@ -55,22 +55,29 @@ export interface Section {
 
 **State:**
 - `sections: Section[]` — セクション一覧
-- `sectionEditingId: string | null` — 現在編集中のセクション ID（新規追加時にインラインエディタを表示）
+- `sectionEditingId: string | null` — 既存セクションを**編集中**の ID（`null` = エディタ非表示）
+- `sectionInsertAt: number | null` — **新規**セクション挿入位置の `beforeSequenceId`（`null` = 挿入エディタ非表示）
 
 **Actions:**
-- `addSection(beforeSequenceId: number, title: string, description: string): void`
-  - UUID を生成してセクションを追加
+- `addSection(beforeSequenceId: number, title: string, description: string): Promise<void>`
+  - 楽観的に一時 ID でセクションを追加し、API 応答後にサーバー採番 ID へ差し替える
 - `updateSection(id: string, title: string, description: string): void`
   - 既存セクションのタイトル・description を更新
 - `removeSection(id: string): void`
   - セクションを削除
 - `setSectionEditingId(id: string | null): void`
-  - インラインエディタの表示/非表示を制御
+  - 既存セクションの編集エディタの表示/非表示を制御
+- `openSectionInsert(beforeSequenceId: number): void`
+  - 新規セクション挿入エディタを指定位置で開く
+- `closeSectionInsert(): void`
+  - 新規セクション挿入エディタを閉じる
+
+**Note:** 新規挿入は `sectionInsertAt`、既存編集は `sectionEditingId` で独立して管理する。
 
 **Selector:**
-- `selectSectionsMap`: `Map<number, Section>` — `beforeSequenceId` → `Section` のマップを返す。TranscriptViewer がセグメント描画時に参照する。
+- `selectSectionsMap`: コンポーネント側で `useMemo` を使い `sections` から `Map<number, Section>` を導出する。セレクタ関数として定義すると毎回新しい `Map` が生成されて React の `useSyncExternalStore` がループするため、ストア外で memoize すること。
 
-### 1-3. セクション追加ボタン UI (`ext-frontend/src/components/SectionDivider.tsx`)
+### 1-3. セクション追加ボタン UI (`ext-frontend/src/components/SectionInsertButton.tsx`)
 
 新コンポーネント: **`SectionInsertButton`**
 

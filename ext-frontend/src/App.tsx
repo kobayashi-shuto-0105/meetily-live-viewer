@@ -152,21 +152,19 @@ function App() {
         console.log("[initialLoad] Loaded segments:", segments.length);
         loadSegments(segments);
 
-        // Load sections for this session
+        // Load sections for this session (always call to clear stale state)
         try {
           const sections = await apiClient.getSessionSections(current.session_id);
-          if (sections.length > 0) {
-            loadSections(
-              sections.map((s) => ({
-                id: s.id,
-                title: s.title,
-                description: s.description,
-                beforeSequenceId: s.before_sequence_id,
-                createdAt: s.created_at,
-              }))
-            );
-            console.log("[initialLoad] Loaded sections:", sections.length);
-          }
+          loadSections(
+            sections.map((s) => ({
+              id: s.id,
+              title: s.title,
+              description: s.description,
+              beforeSequenceId: s.before_sequence_id,
+              createdAt: s.created_at,
+            }))
+          );
+          console.log("[initialLoad] Loaded sections:", sections.length);
         } catch (e) {
           console.warn("[initialLoad] Failed to load sections:", e);
         }

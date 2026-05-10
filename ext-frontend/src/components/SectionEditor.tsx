@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { KeyboardEvent } from "react";
+import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useTranscriptStore } from "../stores/transcriptStore";
 
 // ----------------------------------------------------------------
@@ -60,8 +60,8 @@ export function SectionEditor(props: Props) {
     }
   }, [title, description, props, addSection, updateSection]);
 
-  const handleKeyDown = useCallback(
-    (e: KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+  const handleTitleKeyDown = useCallback(
+    (e: ReactKeyboardEvent<HTMLInputElement>) => {
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
         handleSave();
@@ -75,6 +75,16 @@ export function SectionEditor(props: Props) {
     [handleSave, handleCancel]
   );
 
+  const handleDescKeyDown = useCallback(
+    (e: ReactKeyboardEvent<HTMLTextAreaElement>) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        handleCancel();
+      }
+    },
+    [handleCancel]
+  );
+
   return (
     <div
       className="section-editor"
@@ -86,14 +96,14 @@ export function SectionEditor(props: Props) {
         className="section-editor-title"
         value={title}
         onChange={(e) => setTitle(e.target.value)}
-        onKeyDown={handleKeyDown}
+        onKeyDown={handleTitleKeyDown}
         placeholder="New section"
       />
       <textarea
         className="section-editor-desc"
         value={description}
         onChange={(e) => setDescription(e.target.value)}
-        onKeyDown={handleKeyDown}
+        onKeyDown={handleDescKeyDown}
         placeholder="Description (optional)"
         rows={2}
       />
@@ -114,7 +124,7 @@ export function SectionEditor(props: Props) {
           Cancel
         </button>
         <span className="section-editor-hint">
-          Press Enter to {isEdit ? "save" : "create"}
+          Enter in title to {isEdit ? "save" : "create"} · Esc to cancel
         </span>
       </div>
     </div>

@@ -92,7 +92,7 @@ function toSortedArray(
 // Store
 // ----------------------------------------------------------------
 
-export const useTranscriptStore = create<TranscriptState>((set) => ({
+export const useTranscriptStore = create<TranscriptState>((set, get) => ({
   connectionStatus: "disconnected",
   session: null,
   segments: new Map(),
@@ -112,6 +112,9 @@ export const useTranscriptStore = create<TranscriptState>((set) => ({
       sortedSegments: [],
       selectedSegmentId: null,
       commentInputSegmentId: null,
+      sections: [],
+      sectionEditingId: null,
+      sectionInsertAt: null,
     }),
 
   stopSession: () =>
@@ -299,37 +302,43 @@ export const useTranscriptStore = create<TranscriptState>((set) => ({
 
   // --- section actions ---
 
-  addSection: (beforeSequenceId, title, description) =>
-    set((state) => {
-      // Don't add duplicate section at same position
-      if (state.sections.some((s) => s.beforeSequenceId === beforeSequenceId)) return state;
-      const section: Section = {
-        id: crypto.randomUUID(),
-        title,
-        description,
-        beforeSequenceId,
-        createdAt: new Date().toISOString(),
-      };
+  addSection: async (beforeSequenceId, title, description) => {
+    if (get().sections.some((s) => s.beforeSequenceId === beforeSequenceId)) return;
 
-      // Fire-and-forget API call to persist the section
-      const sessionId = state.session?.sessionId;
-      if (sessionId) {
-        apiClient.createSection(sessionId, {
-          title,
-          description,
-          beforeSequenceId,
-        }).catch((e) => {
-          console.warn("[sections] Failed to persist section:", e);
-        });
-      }
+    // Optimistic update with a temp ID so the UI responds immediately
+    const tempId = `temp-${crypto.randomUUID()}`;
+    const tempSection: Section = {
+      id: tempId,
+      title,
+      description,
+      beforeSequenceId,
+      createdAt: new Date().toISOString(),
+    };
+    set((state) => ({
+      sections: [...state.sections, tempSection].sort(
+        (a, b) => a.beforeSequenceId - b.beforeSequenceId
+      ),
+      sectionInsertAt: null,
+    }));
 
-      return {
-        sections: [...state.sections, section].sort(
-          (a, b) => a.beforeSequenceId - b.beforeSequenceId
+    const sessionId = get().session?.sessionId;
+    if (!sessionId) return;
+
+    try {
+      const res = await apiClient.createSection(sessionId, { title, description, beforeSequenceId });
+      // Replace the temp section with the server-assigned ID so update/delete work correctly
+      set((state) => ({
+        sections: state.sections.map((s) =>
+          s.id === tempId
+            ? { id: res.id, title: res.title, description: res.description, beforeSequenceId: res.before_sequence_id, createdAt: res.created_at }
+            : s
         ),
-        sectionInsertAt: null,
-      };
-    }),
+      }));
+    } catch (e) {
+      console.warn("[sections] Failed to persist section, rolling back:", e);
+      set((state) => ({ sections: state.sections.filter((s) => s.id !== tempId) }));
+    }
+  },
 
   updateSection: (id, title, description) =>
     set((state) => {
@@ -367,7 +376,7 @@ export const useTranscriptStore = create<TranscriptState>((set) => ({
 
   loadSections: (sections) =>
     set({
-      sections: sections.sort((a, b) => a.beforeSequenceId - b.beforeSequenceId),
+      sections: [...sections].sort((a, b) => a.beforeSequenceId - b.beforeSequenceId),
     }),
 
   applySectionFromServer: (payload) =>

@@ -573,16 +573,26 @@ impl ExternalWebRepository {
         description: &str,
         before_sequence_id: i64,
     ) -> Result<ExternalTranscriptSection, SqlxError> {
+        // Inherit the session's meeting_id if it has already been finalized
+        let meeting_id: Option<String> = sqlx::query_scalar(
+            "SELECT meeting_id FROM external_recording_sessions WHERE id = ?",
+        )
+        .bind(session_id)
+        .fetch_optional(pool)
+        .await?
+        .flatten();
+
         let id = format!("ext-section-{}", Uuid::new_v4());
         let now = chrono::Utc::now().to_rfc3339();
 
         sqlx::query(
             "INSERT INTO external_transcript_sections
-                (id, session_id, title, description, before_sequence_id, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (id, session_id, meeting_id, title, description, before_sequence_id, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(session_id)
+        .bind(&meeting_id)
         .bind(title)
         .bind(description)
         .bind(before_sequence_id)
@@ -596,7 +606,7 @@ impl ExternalWebRepository {
         Ok(ExternalTranscriptSection {
             id,
             session_id: session_id.to_string(),
-            meeting_id: None,
+            meeting_id,
             title: title.to_string(),
             description: description.to_string(),
             before_sequence_id,
@@ -606,25 +616,42 @@ impl ExternalWebRepository {
     }
 
     /// セクションのタイトルと説明を更新する。
+    /// `description` が `None` の場合は既存値を維持する。
     pub async fn update_section(
         pool: &SqlitePool,
         section_id: &str,
         title: &str,
-        description: &str,
+        description: Option<&str>,
     ) -> Result<ExternalTranscriptSection, SqlxError> {
         let now = chrono::Utc::now().to_rfc3339();
 
-        sqlx::query(
-            "UPDATE external_transcript_sections
-             SET title = ?, description = ?, updated_at = ?
-             WHERE id = ?",
-        )
-        .bind(title)
-        .bind(description)
-        .bind(&now)
-        .bind(section_id)
-        .execute(pool)
-        .await?;
+        match description {
+            Some(desc) => {
+                sqlx::query(
+                    "UPDATE external_transcript_sections
+                     SET title = ?, description = ?, updated_at = ?
+                     WHERE id = ?",
+                )
+                .bind(title)
+                .bind(desc)
+                .bind(&now)
+                .bind(section_id)
+                .execute(pool)
+                .await?;
+            }
+            None => {
+                sqlx::query(
+                    "UPDATE external_transcript_sections
+                     SET title = ?, updated_at = ?
+                     WHERE id = ?",
+                )
+                .bind(title)
+                .bind(&now)
+                .bind(section_id)
+                .execute(pool)
+                .await?;
+            }
+        }
 
         // 更新後の行を返す
         let section = sqlx::query_as::<_, ExternalTranscriptSection>(

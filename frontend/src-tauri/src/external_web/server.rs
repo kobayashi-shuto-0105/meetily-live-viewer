@@ -923,7 +923,7 @@ async fn update_section(
         &state.pool,
         &section_id,
         &body.title,
-        body.description.as_deref().unwrap_or(""),
+        body.description.as_deref(),
     )
     .await
     {
@@ -990,24 +990,38 @@ async fn delete_section(
     State(state): State<ServerState>,
     Path(section_id): Path<String>,
 ) -> impl IntoResponse {
-    // 削除前にセクション情報を取得（session_id をイベントに含めるため）
-    let section_info = ExternalWebRepository::get_section_by_id(&state.pool, &section_id).await;
+    // 削除前にセクション情報を取得（session_id をイベントに含めるため＋存在確認）
+    let section = match ExternalWebRepository::get_section_by_id(&state.pool, &section_id).await {
+        Ok(Some(s)) => s,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({ "error": "Section not found" })),
+            )
+                .into_response();
+        }
+        Err(e) => {
+            log::error!(
+                "External Web UI: failed to look up section before delete (id={}): {}",
+                section_id,
+                e
+            );
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": "Failed to delete section" })),
+            )
+                .into_response();
+        }
+    };
 
     match ExternalWebRepository::delete_section(&state.pool, &section_id).await {
         Ok(_) => {
-            // session_id をイベントに含める
-            let session_id = section_info
-                .ok()
-                .flatten()
-                .map(|s| s.session_id)
-                .unwrap_or_default();
-
             state
                 .external_state
                 .publish(ExternalWebEvent::TranscriptSectionDeleted(
                     TranscriptSectionDeletedPayload {
                         id: section_id.clone(),
-                        session_id,
+                        session_id: section.session_id,
                     },
                 ));
 
@@ -1043,12 +1057,15 @@ async fn delete_section(
 
 /// DB エラーを適切な HTTP ステータスコードに分類するヘルパー。
 /// - FK 制約違反 or 行なし → 404 Not Found（クライアント起因）
+/// - UNIQUE 制約違反 → 409 Conflict（同一位置への重複作成）
 /// - それ以外 → 500 Internal Server Error
 /// Display トレイト経由で sqlx::Error / anyhow::Error 両方を受け取れる。
 fn classify_db_error(e: &dyn std::fmt::Display) -> StatusCode {
     let msg = e.to_string();
     if msg.contains("FOREIGN KEY") || msg.contains("no rows returned") {
         StatusCode::NOT_FOUND
+    } else if msg.contains("UNIQUE constraint failed") {
+        StatusCode::CONFLICT
     } else {
         StatusCode::INTERNAL_SERVER_ERROR
     }

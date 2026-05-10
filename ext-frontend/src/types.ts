@@ -299,7 +299,7 @@ export interface Section {
   id: string;
   /** セクションタイトル（例: "Discussion", "Opening"） */
   title: string;
-  /** セクションの説明（オプション） */
+  /** セクションの説明（説明なし時は空文字列） */
   description: string;
   /** このセクションが挿入される位置（直後のセグメントの sequenceId） */
   beforeSequenceId: number;
