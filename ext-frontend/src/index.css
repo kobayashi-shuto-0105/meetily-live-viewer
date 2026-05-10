@@ -2201,62 +2201,101 @@ button:disabled { cursor: default; }
   align-items: center;
   justify-content: center;
   background: rgba(0 0 0 / 0.60);
-  backdrop-filter: blur(4px);
+  backdrop-filter: blur(6px);
 }
 
 .onboarding-modal {
   background: var(--glass-strong);
   border: 1px solid var(--border);
-  border-radius: 16px;
+  border-radius: 20px;
   box-shadow: var(--shadow);
-  padding: 36px 40px;
-  width: min(440px, calc(100vw - 32px));
+  padding: 32px 40px 36px;
+  width: min(480px, calc(100vw - 32px));
+  min-height: 400px;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 16px;
+  gap: 0;
+}
+
+/* Step dots */
+.ob-dots {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 28px;
+}
+
+.ob-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--border);
+  transition: background 0.2s, transform 0.2s;
+}
+
+.ob-dot.is-active {
+  background: var(--accent);
+  transform: scale(1.25);
+}
+
+/* Step content wrapper */
+.ob-step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
   text-align: center;
+  flex: 1;
 }
 
-.onboarding-icon {
-  font-size: 36px;
+/* Icon */
+.ob-icon {
+  font-size: 40px;
   line-height: 1;
+  margin-bottom: 2px;
 }
 
-.onboarding-title {
+/* Title */
+.ob-title {
   margin: 0;
   font-size: 20px;
-  font-weight: 600;
+  font-weight: 700;
   color: var(--text-1);
+  letter-spacing: -0.01em;
 }
 
-.onboarding-desc {
+/* Description */
+.ob-desc {
   margin: 0;
   font-size: 13px;
   color: var(--text-2);
-  line-height: 1.6;
+  line-height: 1.65;
+  max-width: 340px;
 }
 
-.onboarding-fields {
+/* Name fields (step 1) */
+.ob-name-fields {
   display: flex;
   gap: 12px;
   width: 100%;
+  margin-top: 4px;
 }
 
-.onboarding-field {
+.ob-field {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   gap: 6px;
   flex: 1;
-  font-size: 11px;
-  font-weight: 500;
-  letter-spacing: 0.06em;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--text-2);
+  color: var(--text-3);
 }
 
-.onboarding-field input {
+.ob-field input {
   width: 100%;
   background: var(--bg-surface2);
   border: 1px solid var(--border);
@@ -2264,31 +2303,180 @@ button:disabled { cursor: default; }
   padding: 10px 12px;
   color: var(--text-1);
   outline: none;
-  transition: border-color 0.15s;
+  transition: border-color 0.15s, box-shadow 0.15s;
 }
 
-.onboarding-field input:focus {
+.ob-field input:focus {
   border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-dim);
 }
 
-.onboarding-btn {
+/* Shortcut list (step 2) */
+.ob-shortcuts {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  background: var(--bg-surface2);
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  padding: 16px 20px;
+  text-align: left;
   margin-top: 4px;
-  padding: 11px 36px;
+}
+
+.ob-shortcut-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.ob-kbd {
+  display: inline-block;
+  min-width: 80px;
+  padding: 4px 10px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: ui-monospace, "SF Mono", monospace;
+  font-size: 12px;
+  color: var(--text-1);
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.ob-shortcut-label {
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.ob-accent-todo  { color: var(--todo-color); }
+.ob-accent-fixme { color: var(--fixme-color); }
+
+/* Section preview (step 3) */
+.ob-section-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  width: 100%;
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  overflow: hidden;
+  margin-top: 4px;
+  font-size: 12px;
+  text-align: left;
+}
+
+.ob-preview-segment {
+  padding: 10px 14px;
+  background: var(--bg-surface2);
+  color: var(--text-2);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.ob-preview-segment:last-child {
+  border-bottom: none;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.ob-preview-insert {
+  position: relative;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  background: transparent;
+}
+
+.ob-preview-plus {
+  position: absolute;
+  left: 10px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
   background: var(--accent);
   color: #fff;
-  border: none;
-  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  z-index: 1;
+}
+
+.ob-preview-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: var(--accent);
+  opacity: 0.35;
+}
+
+.ob-preview-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  background: var(--accent-dim);
+  border-top: 1px solid rgba(93 156 255 / 0.20);
+  border-bottom: 1px solid rgba(93 156 255 / 0.20);
+}
+
+.ob-preview-pin {
   font-size: 14px;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.ob-preview-header-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ob-preview-header-title {
+  font-weight: 600;
+  color: var(--text-1);
+  font-size: 13px;
+}
+
+.ob-preview-header-desc {
+  color: var(--text-3);
+  font-size: 11px;
+}
+
+/* Navigation buttons */
+.ob-nav {
+  display: flex;
+  gap: 10px;
+  width: 100%;
+  justify-content: space-between;
+  margin-top: 8px;
+}
+
+.ob-btn {
+  padding: 10px 22px;
+  border-radius: 8px;
+  font-size: 13px;
   font-weight: 600;
   cursor: pointer;
-  transition: opacity 0.15s;
+  border: none;
+  transition: opacity 0.15s, background 0.15s;
 }
 
-.onboarding-btn:hover:not(:disabled) {
-  opacity: 0.85;
+.ob-btn-primary {
+  background: var(--accent);
+  color: #fff;
 }
 
-.onboarding-btn:disabled {
-  opacity: 0.38;
-  cursor: default;
+.ob-btn-primary:hover:not(:disabled) { opacity: 0.85; }
+.ob-btn-primary:disabled { opacity: 0.38; cursor: default; }
+
+.ob-btn-ghost {
+  background: var(--bg-surface2);
+  color: var(--text-2);
+  border: 1px solid var(--border);
 }
+
+.ob-btn-ghost:hover { background: var(--bg-hover); color: var(--text-1); }
