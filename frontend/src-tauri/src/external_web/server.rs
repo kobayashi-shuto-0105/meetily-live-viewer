@@ -49,7 +49,8 @@ use crate::database::repositories::external_web::ExternalWebRepository;
 use super::state::ExternalWebState;
 use super::types::{
     ExternalWebEvent, TranscriptCommentPayload, TranscriptHighlightDeletedPayload,
-    TranscriptHighlightPayload, TranscriptRevisionPayload,
+    TranscriptHighlightPayload, TranscriptRevisionPayload, TranscriptSectionDeletedPayload,
+    TranscriptSectionPayload,
 };
 
 // =============================================================================
@@ -161,6 +162,20 @@ fn build_router(state: ServerState) -> Router {
             "/api/segments/{segment_id}/highlights/{highlight_id}",
             delete(delete_highlight),
         )
+        // セッション内の全セクションを取得する
+        .route(
+            "/api/sessions/{session_id}/sections",
+            get(get_session_sections),
+        )
+        // セクションを新規作成する
+        .route(
+            "/api/sessions/{session_id}/sections",
+            post(create_section),
+        )
+        // セクションを更新する
+        .route("/api/sections/{section_id}", axum::routing::put(update_section))
+        // セクションを削除する
+        .route("/api/sections/{section_id}", delete(delete_section))
         // トークン認証ミドルウェアを適用する
         .layer(middleware::from_fn_with_state(
             state.clone(),
@@ -306,6 +321,16 @@ async fn get_session_transcripts(
                 Json(serde_json::json!({
                     "session_id": session_id,
                     "segments": views,
+                    "sections": ExternalWebRepository::get_sections_by_session(&state.pool, &session_id)
+                        .await
+                        .unwrap_or_else(|e| {
+                            log::warn!(
+                                "Failed to load sections for session {} (returning empty): {}",
+                                session_id,
+                                e
+                            );
+                            vec![]
+                        }),
                 })),
             )
                 .into_response()
@@ -727,6 +752,284 @@ async fn delete_highlight(
                 status,
                 Json(serde_json::json!({
                     "error": "Failed to delete highlight"
+                })),
+            )
+                .into_response()
+        }
+    }
+}
+
+// =============================================================================
+// セクション取得
+// =============================================================================
+
+/// 指定セッション内の全セクションを取得する。
+async fn get_session_sections(
+    State(state): State<ServerState>,
+    Path(session_id): Path<String>,
+) -> impl IntoResponse {
+    match ExternalWebRepository::get_sections_by_session(&state.pool, &session_id).await {
+        Ok(sections) => {
+            let views: Vec<_> = sections
+                .iter()
+                .map(|s| {
+                    serde_json::json!({
+                        "id": s.id,
+                        "session_id": s.session_id,
+                        "meeting_id": s.meeting_id,
+                        "title": s.title,
+                        "description": s.description,
+                        "before_sequence_id": s.before_sequence_id,
+                        "created_at": s.created_at,
+                    })
+                })
+                .collect();
+
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({
+                    "session_id": session_id,
+                    "sections": views,
+                })),
+            )
+                .into_response()
+        }
+        Err(e) => {
+            log::error!(
+                "External Web UI: failed to get sections (session_id={}): {}",
+                session_id,
+                e
+            );
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": "Failed to get sections"
+                })),
+            )
+                .into_response()
+        }
+    }
+}
+
+// =============================================================================
+// セクション作成
+// =============================================================================
+
+/// セクション作成リクエストのボディ。
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateSectionRequest {
+    /// セクションタイトル
+    title: String,
+    /// セクションの説明文（任意）
+    description: Option<String>,
+    /// このセクションが挿入される位置（直後のセグメントの sequence_id）
+    before_sequence_id: i64,
+}
+
+/// セッションに対するセクションを作成する。
+/// 作成後、WebSocket で `TranscriptSectionCreated` をブロードキャストする。
+async fn create_section(
+    State(state): State<ServerState>,
+    Path(session_id): Path<String>,
+    Json(body): Json<CreateSectionRequest>,
+) -> impl IntoResponse {
+    match ExternalWebRepository::create_section(
+        &state.pool,
+        &session_id,
+        &body.title,
+        body.description.as_deref().unwrap_or(""),
+        body.before_sequence_id,
+    )
+    .await
+    {
+        Ok(section) => {
+            // WebSocket 全クライアントにセクション作成を通知する
+            state
+                .external_state
+                .publish(ExternalWebEvent::TranscriptSectionCreated(
+                    TranscriptSectionPayload {
+                        id: section.id.clone(),
+                        session_id: section.session_id.clone(),
+                        meeting_id: section.meeting_id.clone(),
+                        title: section.title.clone(),
+                        description: section.description.clone(),
+                        before_sequence_id: section.before_sequence_id,
+                        created_at: section.created_at.clone(),
+                    },
+                ));
+
+            log::info!(
+                "External Web UI: section created (id={}, session={})",
+                section.id,
+                session_id
+            );
+
+            (
+                StatusCode::CREATED,
+                Json(serde_json::json!({
+                    "id": section.id,
+                    "session_id": section.session_id,
+                    "meeting_id": section.meeting_id,
+                    "title": section.title,
+                    "description": section.description,
+                    "before_sequence_id": section.before_sequence_id,
+                    "created_at": section.created_at,
+                })),
+            )
+                .into_response()
+        }
+        Err(e) => {
+            let status = classify_db_error(&e);
+            log::error!(
+                "External Web UI: failed to create section (session_id={}, status={}): {}",
+                session_id,
+                status,
+                e
+            );
+            (
+                status,
+                Json(serde_json::json!({
+                    "error": "Failed to create section"
+                })),
+            )
+                .into_response()
+        }
+    }
+}
+
+// =============================================================================
+// セクション更新
+// =============================================================================
+
+/// セクション更新リクエストのボディ。
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateSectionRequest {
+    /// セクションタイトル
+    title: String,
+    /// セクションの説明文
+    description: Option<String>,
+}
+
+/// セクションのタイトル・説明を更新する。
+/// 更新後、WebSocket で `TranscriptSectionUpdated` をブロードキャストする。
+async fn update_section(
+    State(state): State<ServerState>,
+    Path(section_id): Path<String>,
+    Json(body): Json<UpdateSectionRequest>,
+) -> impl IntoResponse {
+    match ExternalWebRepository::update_section(
+        &state.pool,
+        &section_id,
+        &body.title,
+        body.description.as_deref().unwrap_or(""),
+    )
+    .await
+    {
+        Ok(section) => {
+            state
+                .external_state
+                .publish(ExternalWebEvent::TranscriptSectionUpdated(
+                    TranscriptSectionPayload {
+                        id: section.id.clone(),
+                        session_id: section.session_id.clone(),
+                        meeting_id: section.meeting_id.clone(),
+                        title: section.title.clone(),
+                        description: section.description.clone(),
+                        before_sequence_id: section.before_sequence_id,
+                        created_at: section.created_at.clone(),
+                    },
+                ));
+
+            log::info!(
+                "External Web UI: section updated (id={})",
+                section.id
+            );
+
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({
+                    "id": section.id,
+                    "session_id": section.session_id,
+                    "meeting_id": section.meeting_id,
+                    "title": section.title,
+                    "description": section.description,
+                    "before_sequence_id": section.before_sequence_id,
+                    "created_at": section.created_at,
+                })),
+            )
+                .into_response()
+        }
+        Err(e) => {
+            let status = classify_db_error(&e);
+            log::error!(
+                "External Web UI: failed to update section (id={}, status={}): {}",
+                section_id,
+                status,
+                e
+            );
+            (
+                status,
+                Json(serde_json::json!({
+                    "error": "Failed to update section"
+                })),
+            )
+                .into_response()
+        }
+    }
+}
+
+// =============================================================================
+// セクション削除
+// =============================================================================
+
+/// セクションを削除する。
+/// 削除後、WebSocket で `TranscriptSectionDeleted` をブロードキャストする。
+async fn delete_section(
+    State(state): State<ServerState>,
+    Path(section_id): Path<String>,
+) -> impl IntoResponse {
+    // 削除前にセクション情報を取得（session_id をイベントに含めるため）
+    let section_info = ExternalWebRepository::get_section_by_id(&state.pool, &section_id).await;
+
+    match ExternalWebRepository::delete_section(&state.pool, &section_id).await {
+        Ok(_) => {
+            // session_id をイベントに含める
+            let session_id = section_info
+                .ok()
+                .flatten()
+                .map(|s| s.session_id)
+                .unwrap_or_default();
+
+            state
+                .external_state
+                .publish(ExternalWebEvent::TranscriptSectionDeleted(
+                    TranscriptSectionDeletedPayload {
+                        id: section_id.clone(),
+                        session_id,
+                    },
+                ));
+
+            log::info!(
+                "External Web UI: section deleted (id={})",
+                section_id
+            );
+
+            StatusCode::NO_CONTENT.into_response()
+        }
+        Err(e) => {
+            let status = classify_db_error(&e);
+            log::error!(
+                "External Web UI: failed to delete section (id={}, status={}): {}",
+                section_id,
+                status,
+                e
+            );
+            (
+                status,
+                Json(serde_json::json!({
+                    "error": "Failed to delete section"
                 })),
             )
                 .into_response()

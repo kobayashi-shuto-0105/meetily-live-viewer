@@ -38,6 +38,12 @@ pub enum ExternalWebEvent {
     TranscriptHighlightCreated(TranscriptHighlightPayload),
     /// ハイライトが削除されたことを通知する
     TranscriptHighlightDeleted(TranscriptHighlightDeletedPayload),
+    /// セクションが作成されたことを通知する
+    TranscriptSectionCreated(TranscriptSectionPayload),
+    /// セクションが更新されたことを通知する
+    TranscriptSectionUpdated(TranscriptSectionPayload),
+    /// セクションが削除されたことを通知する
+    TranscriptSectionDeleted(TranscriptSectionDeletedPayload),
 }
 
 // =============================================================================
@@ -169,4 +175,32 @@ pub struct TranscriptHighlightPayload {
     pub anchor_end: Option<i64>,
     /// anchor の基準となった revision（raw_text 基準なら None）
     pub anchor_revision_id: Option<String>,
+}
+
+/// セクション作成/更新イベントのペイロード。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TranscriptSectionPayload {
+    /// external_transcript_sections.id
+    pub id: String,
+    /// 所属する録音セッション ID
+    pub session_id: String,
+    /// 保存完了後に確定する meetings.id（録音中は None）
+    pub meeting_id: Option<String>,
+    /// セクションタイトル
+    pub title: String,
+    /// セクションの説明文
+    pub description: String,
+    /// このセクションが挿入される位置（直後のセグメントの sequence_id）
+    pub before_sequence_id: i64,
+    /// 作成日時（ISO8601 形式）
+    pub created_at: String,
+}
+
+/// セクション削除イベントのペイロード。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TranscriptSectionDeletedPayload {
+    /// 削除された external_transcript_sections.id
+    pub id: String,
+    /// 所属する録音セッション ID
+    pub session_id: String,
 }
