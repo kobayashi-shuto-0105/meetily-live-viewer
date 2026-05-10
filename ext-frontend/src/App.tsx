@@ -4,6 +4,8 @@ import type { WebSocketClient } from "./api/ws";
 import { apiClient } from "./api/client";
 import { useTranscriptStore } from "./stores/transcriptStore";
 import { TranscriptViewer } from "./components/TranscriptViewer";
+import { OnboardingModal } from "./components/OnboardingModal";
+import { loadAuthorName } from "./stores/authorName";
 import type { TranscriptSegmentResponse } from "./types";
 
 // ----------------------------------------------------------------
@@ -103,6 +105,7 @@ function createDevMockSegments(): TranscriptSegmentResponse[] {
 
 function App() {
   const [theme] = useState<Theme>(loadTheme);
+  const [showOnboarding, setShowOnboarding] = useState(() => loadAuthorName() === null);
 
   const wsRef = useRef<WebSocketClient | null>(null);
 
@@ -287,6 +290,9 @@ function App() {
 
   return (
     <div className="meetily-app">
+      {showOnboarding && (
+        <OnboardingModal onComplete={() => setShowOnboarding(false)} />
+      )}
       {/* Invisible hover trigger at top-center */}
       <div
         className="cmd-hotzone"
