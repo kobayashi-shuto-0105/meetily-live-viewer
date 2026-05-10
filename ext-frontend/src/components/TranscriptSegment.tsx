@@ -1,271 +1,386 @@
-// =============================================================================
-// TranscriptSegment コンポーネント
-// =============================================================================
-// 1つの文字起こしセグメントを表示するコンポーネント。
-//
-// 表示内容:
-//   - タイムスタンプ（音声開始〜終了時間）
-//   - 表示テキスト（revision があればその edited_text、なければ raw_text）
-//   - 元テキスト（revision がある場合のみ折りたたみ表示）
-//   - 音源種別バッジ（microphone / system）
-//   - 途中結果インジケーター（is_partial=true の場合）
-//   - コメント数・ハイライト数
-//
-// 操作ボタン:
-//   - 編集ボタン → TranscriptEditor 起動
-//   - コメントボタン → CommentPanel 表示
-//   - ハイライトボタン → HighlightToolbar 表示
-// =============================================================================
-
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { KeyboardEvent, MouseEvent, ReactNode } from "react";
 import type { TranscriptSegmentView } from "../types";
+import { useTranscriptStore } from "../stores/transcriptStore";
+import { apiClient } from "../api/client";
 import { TranscriptEditor } from "./TranscriptEditor";
-import { CommentPanel } from "./CommentPanel";
-import { HighlightToolbar } from "./HighlightToolbar";
 
-// =============================================================================
-// Props 型定義
-// =============================================================================
+// ----------------------------------------------------------------
+// Highlight type helpers
+// ----------------------------------------------------------------
 
-interface TranscriptSegmentProps {
-  /** 表示するセグメントデータ */
+type HighlightKind = "todo" | "fixme" | null;
+
+function getHighlightKind(highlights: TranscriptSegmentView["highlights"]): HighlightKind {
+  if (highlights.some((h) => h.color === "fixme" || h.color === "red")) return "fixme";
+  if (highlights.some((h) => h.color === "todo" || h.color === "yellow")) return "todo";
+  return null;
+}
+
+// ----------------------------------------------------------------
+// TranscriptSegment
+// ----------------------------------------------------------------
+
+interface Props {
   segment: TranscriptSegmentView;
 }
 
-// =============================================================================
-// コンポーネント実装
-// =============================================================================
+export function TranscriptSegment({ segment }: Props) {
+  const selectedSegmentId = useTranscriptStore((s) => s.selectedSegmentId);
+  const commentInputSegmentId = useTranscriptStore((s) => s.commentInputSegmentId);
+  const setSelectedSegmentId = useTranscriptStore((s) => s.setSelectedSegmentId);
+  const openCommentInput = useTranscriptStore((s) => s.openCommentInput);
 
-/**
- * 文字起こしセグメントの表示コンポーネント。
- * プラン §13.5 の UI イメージに基づく実装。
- */
-export function TranscriptSegment({ segment }: TranscriptSegmentProps) {
-  // 元テキストの展開状態（revision がある場合のみ使用）
-  const [showRawText, setShowRawText] = useState(false);
+  const isSelected = selectedSegmentId === segment.id;
+  const isCommenting = commentInputSegmentId === segment.id;
 
-  // 編集モードの状態（true のとき TranscriptEditor を表示する）
   const [isEditing, setIsEditing] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
+  const [highlightLoading, setHighlightLoading] = useState<"todo" | "fixme" | null>(null);
 
-  // コメントパネルの表示状態（true のとき CommentPanel を表示する）
-  const [showComments, setShowComments] = useState(false);
+  const cardRef = useRef<HTMLElement>(null);
 
-  // ハイライトツールバーの表示状態（true のとき HighlightToolbar を表示する）
-  const [showHighlights, setShowHighlights] = useState(false);
+  const shouldShowEditor = isSelected && isEditing;
+  const shouldShowHistory = isSelected && showHistory;
 
-  // revision が存在するかどうか（display_text が raw_text と異なるか）
-  const hasRevision = segment.revisions.length > 0;
+  useEffect(() => {
+    if (isSelected && !shouldShowEditor && !isCommenting) {
+      cardRef.current?.focus();
+    }
+  }, [isSelected, shouldShowEditor, isCommenting]);
 
-  // コメント数とハイライト数
+  const handleClick = useCallback(
+    (e: MouseEvent) => {
+      e.stopPropagation();
+      if (!isSelected) {
+        setIsEditing(false);
+        setShowHistory(false);
+      }
+      setSelectedSegmentId(segment.id);
+    },
+    [isSelected, segment.id, setSelectedSegmentId]
+  );
+
+  const toggleHighlight = useCallback(
+    async (kind: "todo" | "fixme") => {
+      if (highlightLoading) return;
+      const existing = segment.highlights.find(
+        (h) =>
+          h.color === kind ||
+          (kind === "todo" && h.color === "yellow") ||
+          (kind === "fixme" && h.color === "red")
+      );
+
+      setHighlightLoading(kind);
+      try {
+        if (existing) {
+          await apiClient.deleteHighlight(segment.id, existing.id);
+        } else {
+          await apiClient.createHighlight(segment.id, { color: kind });
+        }
+      } finally {
+        setHighlightLoading(null);
+      }
+    },
+    [segment.id, segment.highlights, highlightLoading]
+  );
+
+  const handleKeyDown = useCallback(
+    (e: KeyboardEvent<HTMLElement>) => {
+      if (["INPUT", "TEXTAREA"].includes((e.target as HTMLElement).tagName)) return;
+
+      if (e.key === "Enter" && !e.metaKey && !e.ctrlKey) {
+        e.preventDefault();
+        setIsEditing(true);
+        return;
+      }
+
+      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        openCommentInput(segment.id);
+        return;
+      }
+
+      if (e.key === "t" || e.key === "T") {
+        e.preventDefault();
+        toggleHighlight("todo");
+        return;
+      }
+
+      if (e.key === "f" || e.key === "F") {
+        e.preventDefault();
+        toggleHighlight("fixme");
+        return;
+      }
+
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setSelectedSegmentId(null);
+      }
+    },
+    [toggleHighlight, openCommentInput, segment.id, setSelectedSegmentId]
+  );
+
+  const highlightKind = getHighlightKind(segment.highlights);
   const commentCount = segment.comments.length;
-  const highlightCount = segment.highlights.length;
+  const hasRevision = segment.revisions.length > 0;
+  // Always show sidecar when there are comments (not just when selected)
+  const hasSidecar = isCommenting || commentCount > 0;
 
   return (
-    <div
-      style={{
-        padding: "0.75rem 1rem",
-        borderBottom: "1px solid #e5e7eb",
-        // 途中結果（partial）の場合は半透明にする
-        opacity: segment.isPartial ? 0.6 : 1,
-        // ハイライトがある場合は左ボーダーで示す
-        borderLeft: highlightCount > 0 ? "3px solid #fbbf24" : "3px solid transparent",
-      }}
-    >
-      {/* --- ヘッダー行: タイムスタンプ + メタ情報 --- */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: "0.5rem",
-          marginBottom: "0.25rem",
-          fontSize: "0.8rem",
-          color: "#6b7280",
-        }}
+    <div className={`segment-row ${hasSidecar ? "has-sidecar" : ""} ${isSelected ? "is-selected-row" : ""}`}>
+      <article
+        ref={cardRef}
+        tabIndex={0}
+        onClick={handleClick}
+        onKeyDown={handleKeyDown}
+        className={[
+          "segment-card",
+          isSelected ? "is-selected" : "",
+          highlightKind ? `has-${highlightKind}` : "",
+        ].join(" ")}
       >
-        {/* タイムスタンプ: 音声の開始〜終了位置 */}
-        <span style={{ fontFamily: "monospace" }}>
-          [{formatTime(segment.audioStartTime)} - {formatTime(segment.audioEndTime)}]
-        </span>
-
-        {/* 音源種別バッジ */}
-        <span
-          style={{
-            padding: "0.1rem 0.4rem",
-            borderRadius: "4px",
-            fontSize: "0.7rem",
-            // microphone は青、system は緑で色分けする
-            backgroundColor: segment.source === "microphone" ? "#dbeafe" : "#d1fae5",
-            color: segment.source === "microphone" ? "#1e40af" : "#065f46",
-          }}
-        >
-          {segment.source}
-        </span>
-
-        {/* 途中結果インジケーター */}
-        {segment.isPartial && (
-          <span style={{ color: "#f59e0b", fontStyle: "italic" }}>
-            (認識中...)
-          </span>
-        )}
-
-        {/* 信頼度スコア（デバッグ用、低い場合のみ表示） */}
-        {segment.confidence < 0.5 && (
-          <span style={{ color: "#ef4444", fontSize: "0.7rem" }}>
-            信頼度: {(segment.confidence * 100).toFixed(0)}%
-          </span>
-        )}
-      </div>
-
-      {/* --- メインテキスト: display_text --- */}
-      <p style={{ margin: "0.25rem 0", lineHeight: 1.6 }}>
-        {segment.displayText}
-      </p>
-
-      {/* --- インラインエディター（編集モード時のみ表示） --- */}
-      {isEditing && (
-        <TranscriptEditor
-          segmentId={segment.id}
-          currentText={segment.displayText}
-          onClose={() => setIsEditing(false)}
-        />
-      )}
-
-      {/* --- 元テキスト（revision がある場合のみ表示） --- */}
-      {hasRevision && (
-        <div style={{ marginTop: "0.25rem" }}>
-          <button
-            onClick={() => setShowRawText(!showRawText)}
-            style={{
-              background: "none",
-              border: "none",
-              color: "#6b7280",
-              fontSize: "0.75rem",
-              cursor: "pointer",
-              padding: 0,
-              textDecoration: "underline",
+        {shouldShowEditor ? (
+          <TranscriptEditor
+            segmentId={segment.id}
+            currentText={segment.displayText}
+            onClose={() => {
+              setIsEditing(false);
+              cardRef.current?.focus();
             }}
-          >
-            {showRawText ? "▼ 元テキストを隠す" : "▶ 元テキストを表示"}
-          </button>
-          {showRawText && (
-            <p
-              style={{
-                margin: "0.25rem 0",
-                padding: "0.5rem",
-                backgroundColor: "#f9fafb",
-                borderRadius: "4px",
-                fontSize: "0.85rem",
-                color: "#6b7280",
-                lineHeight: 1.5,
-              }}
-            >
-              {segment.rawText}
-            </p>
-          )}
-        </div>
-      )}
+          />
+        ) : (
+          <>
+            <div className="segment-main-line">
+              {highlightKind === "todo" && <Badge tone="todo">TODO</Badge>}
+              {highlightKind === "fixme" && <Badge tone="fixme">FIXME</Badge>}
+              <p className={`segment-text ${segment.isPartial ? "is-partial" : ""}`}>
+                {segment.displayText}
+                {segment.isPartial && <span className="partial-label">recognizing...</span>}
+              </p>
+            </div>
 
-      {/* --- フッター: 操作ボタンとカウンター --- */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: "0.75rem",
-          marginTop: "0.5rem",
-          fontSize: "0.75rem",
-          color: "#9ca3af",
-        }}
-      >
-        {/* 編集ボタン: クリックで TranscriptEditor を表示する */}
-        {!isEditing && (
-          <button
-            onClick={() => setIsEditing(true)}
-            style={{
-              background: "none",
-              border: "1px solid #d1d5db",
-              borderRadius: "4px",
-              padding: "0.15rem 0.5rem",
-              fontSize: "0.75rem",
-              color: "#6b7280",
-              cursor: "pointer",
-            }}
-            title="テキストを編集"
-          >
-            ✏️ 編集
-          </button>
+            {(commentCount > 0 || hasRevision) && (
+              <div className="segment-meta">
+                {commentCount > 0 && (
+                  <span>{commentCount} comment{commentCount > 1 ? "s" : ""}</span>
+                )}
+                {hasRevision && <span>v{segment.revisions.length}</span>}
+              </div>
+            )}
+
+            {isSelected && (
+              <div className="segment-shortcuts">
+                <ShortcutHint keys="Enter" label="Edit" />
+                <ShortcutHint keys="T" label="TODO" loading={highlightLoading === "todo"} />
+                <ShortcutHint keys="F" label="FIXME" loading={highlightLoading === "fixme"} />
+                <ShortcutHint keys="⌘ Enter" label="Comment" />
+                {hasRevision && (
+                  <button
+                    className="history-toggle"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setShowHistory((v) => !v);
+                    }}
+                  >
+                    {showHistory ? "Hide history" : "Edit history"}
+                  </button>
+                )}
+              </div>
+            )}
+
+            {shouldShowHistory && hasRevision && <EditHistory segment={segment} />}
+          </>
         )}
+      </article>
 
-        {/* コメントボタン: クリックで CommentPanel を表示/非表示する */}
-        <button
-          onClick={() => setShowComments(!showComments)}
-          style={{
-            background: "none",
-            border: "1px solid #d1d5db",
-            borderRadius: "4px",
-            padding: "0.15rem 0.5rem",
-            fontSize: "0.75rem",
-            color: showComments ? "#f59e0b" : "#6b7280",
-            cursor: "pointer",
-          }}
-          title="コメントを表示/追加"
-        >
-          💬 {commentCount > 0 ? commentCount : "コメント"}
-        </button>
-
-        {/* ハイライトボタン: クリックで HighlightToolbar を表示/非表示する */}
-        <button
-          onClick={() => setShowHighlights(!showHighlights)}
-          style={{
-            background: "none",
-            border: "1px solid #d1d5db",
-            borderRadius: "4px",
-            padding: "0.15rem 0.5rem",
-            fontSize: "0.75rem",
-            color: showHighlights ? "#8b5cf6" : "#6b7280",
-            cursor: "pointer",
-          }}
-          title="ハイライトを表示/追加"
-        >
-          🔆 {highlightCount > 0 ? highlightCount : "ハイライト"}
-        </button>
-
-        {/* revision 数 */}
-        {hasRevision && (
-          <span>✏️ v{segment.revisions.length}</span>
-        )}
-      </div>
-
-      {/* --- コメントパネル（showComments が true のとき表示） --- */}
-      {showComments && (
-        <CommentPanel
-          segmentId={segment.id}
-          comments={segment.comments}
-          onClose={() => setShowComments(false)}
-        />
-      )}
-
-      {/* --- ハイライトツールバー（showHighlights が true のとき表示） --- */}
-      {showHighlights && (
-        <HighlightToolbar
-          segmentId={segment.id}
-          highlights={segment.highlights}
-          onClose={() => setShowHighlights(false)}
-        />
+      {hasSidecar && (
+        <SegmentSidecar segment={segment} isCommenting={isCommenting} />
       )}
     </div>
   );
 }
 
-// =============================================================================
-// ユーティリティ関数
-// =============================================================================
+// ----------------------------------------------------------------
+// Segment side comment card
+// ----------------------------------------------------------------
 
-/**
- * 秒数を "MM:SS" 形式にフォーマットする。
- * 例: 72.5 → "01:12"
- */
-function formatTime(seconds: number): string {
-  const mins = Math.floor(seconds / 60);
-  const secs = Math.floor(seconds % 60);
-  return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
+function SegmentSidecar({
+  segment,
+  isCommenting,
+}: {
+  segment: TranscriptSegmentView;
+  isCommenting: boolean;
+}) {
+  return (
+    <aside className="segment-sidecar" onClick={(e) => e.stopPropagation()}>
+      {isCommenting && <CommentComposer segmentId={segment.id} />}
+      {segment.comments.length > 0 && <SegmentComments segment={segment} />}
+    </aside>
+  );
+}
+
+function CommentComposer({ segmentId }: { segmentId: string }) {
+  const closeCommentInput = useTranscriptStore((s) => s.closeCommentInput);
+  const [text, setText] = useState("");
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
+
+  const submit = useCallback(async () => {
+    const trimmed = text.trim();
+    if (!trimmed || sending) return;
+
+    setSending(true);
+    setError(null);
+    try {
+      await apiClient.createComment(segmentId, { commentText: trimmed });
+      setText("");
+      closeCommentInput();
+    } catch {
+      setError("Failed to send. Please try again.");
+    } finally {
+      setSending(false);
+    }
+  }, [closeCommentInput, segmentId, sending, text]);
+
+  const handleKeyDown = useCallback(
+    (e: KeyboardEvent<HTMLTextAreaElement>) => {
+      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        submit();
+        return;
+      }
+
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setText("");
+        closeCommentInput();
+      }
+    },
+    [closeCommentInput, submit]
+  );
+
+  return (
+    <div className="comment-card comment-composer">
+      <div className="comment-card-title">Comment</div>
+      <textarea
+        ref={inputRef}
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={handleKeyDown}
+        disabled={sending}
+        rows={4}
+        placeholder="Add comment..."
+      />
+      {error && <div className="comment-error">{error}</div>}
+      <div className="comment-actions">
+        <span>⌘ Enter to send</span>
+        <button type="button" onClick={closeCommentInput} disabled={sending}>
+          Cancel
+        </button>
+        <button type="button" onClick={submit} disabled={!text.trim() || sending}>
+          {sending ? "Sending..." : "Send"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function SegmentComments({ segment }: { segment: TranscriptSegmentView }) {
+  return (
+    <div className="comment-card comment-thread">
+      <div className="comment-list">
+        {segment.comments.map((comment) => (
+          <div className="comment-item" key={comment.id}>
+            <div className="comment-item-header">
+              <span className="comment-avatar">
+                {(comment.author_name ?? "C").trim().charAt(0).toUpperCase()}
+              </span>
+              <span className="comment-author">{comment.author_name ?? "Comment"}</span>
+              <span className="comment-menu">...</span>
+            </div>
+            <div className="comment-body">{comment.comment_text}</div>
+            <div className="comment-time">{formatCommentTime(comment.created_at)}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function formatCommentTime(createdAt?: string) {
+  if (!createdAt) return "just now";
+
+  const created = new Date(createdAt).getTime();
+  if (Number.isNaN(created)) return "just now";
+
+  const elapsedMinutes = Math.max(1, Math.round((Date.now() - created) / 60000));
+  if (elapsedMinutes < 60) return `${elapsedMinutes} min ago`;
+
+  const elapsedHours = Math.round(elapsedMinutes / 60);
+  return `${elapsedHours}h ago`;
+}
+
+// ----------------------------------------------------------------
+// Edit history panel
+// ----------------------------------------------------------------
+
+function EditHistory({ segment }: { segment: TranscriptSegmentView }) {
+  const sorted = [...segment.revisions].sort((a, b) => a.version - b.version);
+
+  return (
+    <div className="edit-history">
+      <div className="edit-history-title">Edit History</div>
+      <div className="edit-history-row is-muted">
+        <span>v0</span>
+        <del>{segment.rawText}</del>
+      </div>
+
+      {sorted.map((revision, index) => (
+        <div
+          key={revision.id}
+          className={`edit-history-row ${index === sorted.length - 1 ? "is-current" : ""}`}
+        >
+          <span>v{revision.version}</span>
+          <span>{revision.edited_text}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ----------------------------------------------------------------
+// Small helpers
+// ----------------------------------------------------------------
+
+function Badge({
+  tone,
+  children,
+}: {
+  tone: "todo" | "fixme";
+  children: ReactNode;
+}) {
+  return <span className={`segment-badge segment-badge-${tone}`}>{children}</span>;
+}
+
+function ShortcutHint({
+  keys,
+  label,
+  loading,
+}: {
+  keys: string;
+  label: string;
+  loading?: boolean;
+}) {
+  return (
+    <span className="shortcut-hint">
+      <kbd>{keys}</kbd>
+      <span>{loading ? "..." : label}</span>
+    </span>
+  );
 }

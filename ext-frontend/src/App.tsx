@@ -1,142 +1,359 @@
-// =============================================================================
-// External Web UI メインアプリケーション
-// =============================================================================
-// Meetily の文字起こしをリアルタイムで閲覧・編集するための Web UI。
-// WebSocket でリアルタイム更新を受信し、REST API で編集操作を行う。
-//
-// コンポーネント構成:
-//   - ConnectionStatusBar: WebSocket 接続状態の表示
-//   - TranscriptViewer: リアルタイム文字起こし一覧
-//   - TranscriptEditor: セグメント編集 UI（TranscriptSegment 内で表示）
-//   - CommentPanel: コメント追加 UI（TranscriptSegment 内で表示）
-//   - HighlightToolbar: ハイライト追加 UI（TranscriptSegment 内で表示）
-// =============================================================================
-
-import { useEffect, useRef } from "react";
-import { ConnectionStatusBar } from "./components/ConnectionStatusBar";
-import { TranscriptViewer } from "./components/TranscriptViewer";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createWebSocketClient } from "./api/ws";
 import type { WebSocketClient } from "./api/ws";
+import { apiClient } from "./api/client";
 import { useTranscriptStore } from "./stores/transcriptStore";
+import { TranscriptViewer } from "./components/TranscriptViewer";
+import type { TranscriptSegmentResponse } from "./types";
+
+// ----------------------------------------------------------------
+// Theme helpers
+// ----------------------------------------------------------------
+
+type Theme = "dark" | "light";
+
+function loadTheme(): Theme {
+  return (localStorage.getItem("meetily-theme") as Theme) ?? "dark";
+}
+
+function applyTheme(theme: Theme) {
+  document.documentElement.setAttribute("data-theme", theme);
+  localStorage.setItem("meetily-theme", theme);
+}
+
+const mockSessionId = "mock-session-sidecar-layout";
+
+function createDevMockSegments(): TranscriptSegmentResponse[] {
+  const base = {
+    session_id: mockSessionId,
+    meeting_id: null,
+    source: "microphone",
+    is_partial: false,
+    confidence: 0.96,
+    revisions: [],
+    highlights: [],
+  };
+
+  return [
+    {
+      ...base,
+      id: "mock-segment-1",
+      sequence_id: 1,
+      raw_text: "You know that.",
+      display_text: "You know that.",
+      timestamp: "01:28",
+      audio_start_time: 88,
+      audio_end_time: 90,
+      duration: 2,
+      comments: [],
+    },
+    {
+      ...base,
+      id: "mock-segment-2",
+      sequence_id: 2,
+      raw_text: "I don't want this one.",
+      display_text: "I don't want this one.",
+      timestamp: "01:29",
+      audio_start_time: 91,
+      audio_end_time: 94,
+      duration: 3,
+      comments: [
+        {
+          id: "mock-comment-1",
+          external_segment_id: "mock-segment-2",
+          comment_text: "この部分は少し意図を補足した方が伝わりやすいかも。",
+          author_name: "Sarah J.",
+          anchor_start: null,
+          anchor_end: null,
+          anchor_revision_id: null,
+          created_at: new Date().toISOString(),
+        },
+      ],
+    },
+    {
+      ...base,
+      id: "mock-segment-3",
+      sequence_id: 3,
+      raw_text: "Let's keep the alternative version for the summary.",
+      display_text: "Let's keep the alternative version for the summary.",
+      timestamp: "01:34",
+      audio_start_time: 96,
+      audio_end_time: 100,
+      duration: 4,
+      comments: [],
+      highlights: [
+        {
+          id: "mock-highlight-1",
+          external_segment_id: "mock-segment-3",
+          color: "todo",
+          note: null,
+          anchor_start: null,
+          anchor_end: null,
+          anchor_revision_id: null,
+          created_at: new Date().toISOString(),
+        },
+      ],
+    },
+  ];
+}
+
+// ----------------------------------------------------------------
+// App
+// ----------------------------------------------------------------
 
 function App() {
-  // WebSocket クライアントの参照を保持する（再レンダリングで再生成しないため）
+  const [theme] = useState<Theme>(loadTheme);
+
   const wsRef = useRef<WebSocketClient | null>(null);
 
-  // Zustand ストアのアクションを取得する
-  const setConnectionStatus = useTranscriptStore(
-    (state) => state.setConnectionStatus
-  );
-  const upsertSegment = useTranscriptStore((state) => state.upsertSegment);
-  const addRevision = useTranscriptStore((state) => state.addRevision);
-  const addComment = useTranscriptStore((state) => state.addComment);
-  const addHighlight = useTranscriptStore((state) => state.addHighlight);
-  const startSession = useTranscriptStore((state) => state.startSession);
-  const stopSession = useTranscriptStore((state) => state.stopSession);
-  const setMeetingId = useTranscriptStore((state) => state.setMeetingId);
+  const {
+    setConnectionStatus,
+    upsertSegment,
+    addRevision,
+    addComment,
+    addHighlight,
+    removeHighlight,
+    startSession,
+    stopSession,
+    setMeetingId,
+    restoreSession,
+    loadSegments,
+    setSelectedSegmentId,
+    session,
+  } = useTranscriptStore();
 
-  // マウント時に WebSocket 接続を開始し、アンマウント時に切断する
+  // Apply theme to <html data-theme>
+  useEffect(() => {
+    applyTheme(theme);
+  }, [theme]);
+
+  // Restore existing session + segments on first load
+  useEffect(() => {
+    function loadDevMockSession() {
+      restoreSession(mockSessionId, null, new Date().toISOString());
+      loadSegments(createDevMockSegments());
+      setSelectedSegmentId("mock-segment-2");
+    }
+
+    async function initialLoad() {
+      try {
+        const current = await apiClient.getCurrentSession();
+        if (!current) {
+          console.log("[initialLoad] No active session found.");
+          if (import.meta.env.DEV) loadDevMockSession();
+          return;
+        }
+        console.log("[initialLoad] Restoring session:", current.session_id);
+        restoreSession(current.session_id, current.meeting_title, current.started_at);
+        const segments = await apiClient.getSessionTranscripts(current.session_id);
+        console.log("[initialLoad] Loaded segments:", segments.length);
+        loadSegments(segments);
+      } catch (e) {
+        // Log so the error is visible in DevTools — not a fatal failure
+        console.warn("[initialLoad] Failed to restore session from REST API:", e);
+        if (import.meta.env.DEV) loadDevMockSession();
+      }
+    }
+    initialLoad();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // WebSocket connection
   useEffect(() => {
     const ws = createWebSocketClient({
-      // --- WebSocket イベントの処理 ---
       onEvent: (event) => {
         switch (event.type) {
-          case "RecordingStarted":
-            // 録音開始: セッション情報をストアにセットする
-            startSession(
-              event.payload.session_id,
-              event.payload.meeting_title,
-              event.payload.started_at
-            );
+          case "RecordingStarted": {
+            // If the server re-sends RecordingStarted for the SAME session we
+            // already restored from the REST API, don't call startSession()
+            // (which clears all segments). Use restoreSession() instead so
+            // the transcripts we just fetched are preserved.
+            const existingId = useTranscriptStore.getState().session?.sessionId;
+            if (existingId === event.payload.session_id) {
+              restoreSession(
+                event.payload.session_id,
+                event.payload.meeting_title,
+                event.payload.started_at
+              );
+            } else {
+              startSession(
+                event.payload.session_id,
+                event.payload.meeting_title,
+                event.payload.started_at
+              );
+            }
             break;
-
+          }
           case "RecordingStopped":
-            // 録音停止: セッション状態を更新する
             stopSession();
             break;
-
           case "MeetingPersisted":
-            // meeting_id 確定: セッションに meeting_id を紐付ける
-            setMeetingId(
-              event.payload.session_id,
-              event.payload.meeting_id
-            );
+            setMeetingId(event.payload.session_id, event.payload.meeting_id);
             break;
-
           case "TranscriptSegmentUpserted":
-            // セグメント追加/更新: ストアに upsert する
             upsertSegment(event.payload);
             break;
-
           case "TranscriptRevisionCreated":
-            // revision 作成: 対象セグメントの displayText を更新する
             addRevision(event.payload);
             break;
-
           case "TranscriptCommentCreated":
-            // コメント追加: 対象セグメントに追加する
             addComment(event.payload);
             break;
-
           case "TranscriptHighlightCreated":
-            // ハイライト追加: 対象セグメントに追加する
             addHighlight(event.payload);
+            break;
+          case "TranscriptHighlightDeleted":
+            removeHighlight(event.payload);
             break;
         }
       },
-
-      // --- 接続状態の変更をストアに反映する ---
-      onStatusChange: (status) => {
-        setConnectionStatus(status);
-      },
+      onStatusChange: setConnectionStatus,
     });
 
     wsRef.current = ws;
     ws.connect();
 
-    // アンマウント時に WebSocket 接続を切断する
     return () => {
       ws.disconnect();
       wsRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // マウント時のみ実行する（ストアのアクションは安定した参照）
+  }, []);
+
+  const title = session?.meetingTitle?.trim() ?? "";
+
+  // ---- Command bar visibility (⌘P or top-center hover) ----
+  const [cmdBarVisible, setCmdBarVisible] = useState(false);
+  const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const showBar = useCallback(() => {
+    if (hideTimerRef.current) {
+      clearTimeout(hideTimerRef.current);
+      hideTimerRef.current = null;
+    }
+    setCmdBarVisible(true);
+  }, []);
+
+  const scheduleHide = useCallback(() => {
+    hideTimerRef.current = setTimeout(() => setCmdBarVisible(false), 320);
+  }, []);
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "p") {
+        e.preventDefault();
+        if (hideTimerRef.current) {
+          clearTimeout(hideTimerRef.current);
+          hideTimerRef.current = null;
+        }
+        setCmdBarVisible((v) => !v);
+      }
+      if (e.key === "Escape") {
+        setCmdBarVisible(false);
+      }
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, []);
 
   return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        height: "100vh",
-        fontFamily:
-          '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-      }}
-    >
-      {/* --- ヘッダー --- */}
-      <header
-        style={{
-          padding: "0.75rem 1rem",
-          borderBottom: "1px solid #e5e7eb",
-          backgroundColor: "#fff",
-        }}
-      >
-        <h1
-          style={{
-            margin: 0,
-            fontSize: "1.25rem",
-            fontWeight: 600,
-          }}
-        >
-          Meetily External Web UI
-        </h1>
-      </header>
+    <div className="meetily-app">
+      {/* Invisible hover trigger at top-center */}
+      <div
+        className="cmd-hotzone"
+        onMouseEnter={showBar}
+        onMouseLeave={scheduleHide}
+      />
 
-      {/* --- 接続状態バー --- */}
-      <ConnectionStatusBar />
+      <div className="app-frame">
+        <header className="app-header">
+          <div className="brand-corner" aria-label="Meetily">
+            <img
+              className="brand-icon brand-icon-dark"
+              src="/assets/Meetily_icon_white.png"
+              alt=""
+            />
+            <img
+              className="brand-icon brand-icon-light"
+              src="/assets/Meetily_icon_black.png"
+              alt=""
+            />
+          </div>
 
-      {/* --- メインコンテンツ: 文字起こし一覧 --- */}
-      <TranscriptViewer />
+          {title && <h1 className="meeting-title">{title}</h1>}
+          <CommandBar
+            visible={cmdBarVisible}
+            onMouseEnter={showBar}
+            onMouseLeave={scheduleHide}
+          />
+          <ConnectionBadge />
+        </header>
+
+        <TranscriptViewer />
+      </div>
     </div>
+  );
+}
+
+// ----------------------------------------------------------------
+// Sub-components
+// ----------------------------------------------------------------
+
+function CommandBar({
+  visible,
+  onMouseEnter,
+  onMouseLeave,
+}: {
+  visible: boolean;
+  onMouseEnter: () => void;
+  onMouseLeave: () => void;
+}) {
+  return (
+    <div
+      className={`command-bar${visible ? " is-visible" : ""}`}
+      aria-label="Command entry"
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
+    >
+      <span className="command-search" aria-hidden="true" />
+      <span className="command-placeholder">コメントを追加 / コマンドを入力</span>
+      <span className="command-kbd">⌘ P</span>
+      <button className="command-submit" type="button" aria-label="Submit command">
+        ↑
+      </button>
+      <div className="command-help" aria-hidden="true">
+        T: TODO <span>|</span> F: FIXME <span>|</span> ⌘ Enter: コメント <span>|</span> Esc: 閉じる
+      </div>
+    </div>
+  );
+}
+
+function ConnectionBadge() {
+  const status = useTranscriptStore((s) => s.connectionStatus);
+
+  const MAP = {
+    connected:    { label: "Live",         color: "var(--ok)" },
+    connecting:   { label: "Connecting…",  color: "var(--warn)" },
+    disconnected: { label: "Disconnected", color: "var(--err)" },
+    error:        { label: "Error",        color: "var(--err)" },
+  } as const;
+
+  const { label, color } = MAP[status];
+
+  return (
+    <span
+      className="connection-badge"
+      style={{ color }}
+    >
+      <span
+        className="connection-dot"
+        style={{
+          background: color,
+          animation: status === "connecting" ? "pulse 1.2s ease-in-out infinite" : undefined,
+        }}
+      />
+      {label}
+    </span>
   );
 }
 

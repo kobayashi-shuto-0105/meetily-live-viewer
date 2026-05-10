@@ -11,6 +11,7 @@
 //   POST /api/segments/:id/revisions            - 文字起こし修正作成
 //   POST /api/segments/:id/comments             - コメント追加
 //   POST /api/segments/:id/highlights           - ハイライト追加
+//   DELETE /api/segments/:id/highlights/:hid    - ハイライト削除（トグル取り消し）
 //
 // 認証:
 //   全リクエストにクエリパラメータ `?token=xxx` を付与する。
@@ -66,9 +67,9 @@ export class ApiClient {
   private readonly token: string;
 
   constructor(options?: ApiClientOptions) {
-    // 環境変数からデフォルト値を取得する
-    this.baseUrl = options?.baseUrl ?? import.meta.env.VITE_MEETILY_API_BASE;
-    this.token = options?.token ?? import.meta.env.VITE_MEETILY_ACCESS_TOKEN;
+    // Env var → empty string (same origin, works with Vite dev proxy)
+    this.baseUrl = options?.baseUrl ?? import.meta.env.VITE_MEETILY_API_BASE ?? "";
+    this.token = options?.token ?? import.meta.env.VITE_MEETILY_ACCESS_TOKEN ?? "dev-token";
   }
 
   // -------------------------------------------------------------------------
@@ -80,7 +81,9 @@ export class ApiClient {
    * 全リクエストにクエリパラメータ `?token=xxx` を付与する。
    */
   private buildUrl(path: string): string {
-    const url = new URL(path, this.baseUrl);
+    // When baseUrl is empty, resolve against the current page origin (proxy mode)
+    const base = this.baseUrl || window.location.origin;
+    const url = new URL(path, base);
     url.searchParams.set("token", this.token);
     return url.toString();
   }
@@ -120,7 +123,8 @@ export class ApiClient {
   /** サーバーの疎通確認を行う（認証不要） */
   async checkHealth(): Promise<boolean> {
     try {
-      const url = new URL("/health", this.baseUrl).toString();
+      const base = this.baseUrl || window.location.origin;
+      const url = new URL("/health", base).toString();
       const response = await fetch(url);
       return response.ok;
     } catch {
@@ -149,25 +153,31 @@ export class ApiClient {
   /**
    * 指定セッション ID の全セグメントを取得する。
    * リアルタイム録音中でも録音後でも使用可能。
+   *
+   * Server returns { session_id, segments: [...] } — unwrap the array here.
    */
   async getSessionTranscripts(
     sessionId: string
   ): Promise<TranscriptSegmentResponse[]> {
-    return this.request<TranscriptSegmentResponse[]>(
+    const res = await this.request<{ session_id: string; segments: TranscriptSegmentResponse[] }>(
       `/api/sessions/${encodeURIComponent(sessionId)}/transcripts`
     );
+    return res.segments ?? [];
   }
 
   /**
    * 保存済み会議の文字起こし + overlay を取得する。
    * meeting_id が確定した後に使用する。
+   *
+   * Server returns { meeting_id, segments: [...] } — unwrap the array here.
    */
   async getMeetingTranscripts(
     meetingId: string
   ): Promise<TranscriptSegmentResponse[]> {
-    return this.request<TranscriptSegmentResponse[]>(
+    const res = await this.request<{ meeting_id: string; segments: TranscriptSegmentResponse[] }>(
       `/api/meetings/${encodeURIComponent(meetingId)}/transcripts`
     );
+    return res.segments ?? [];
   }
 
   // -------------------------------------------------------------------------
@@ -231,6 +241,29 @@ export class ApiClient {
         body: JSON.stringify(body),
       }
     );
+  }
+
+  /**
+   * 指定セグメントのハイライトを削除する。
+   * 同種ハイライトの再付与によるトグル取り消し操作で使われる。
+   * 成功時は 204 No Content が返るため、JSON パースを避ける専用パスを通す。
+   */
+  async deleteHighlight(
+    segmentId: string,
+    highlightId: string
+  ): Promise<void> {
+    const url = this.buildUrl(
+      `/api/segments/${encodeURIComponent(segmentId)}/highlights/${encodeURIComponent(highlightId)}`
+    );
+    const response = await fetch(url, { method: "DELETE" });
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => "Unknown error");
+      throw new ApiError(
+        response.status,
+        errorText,
+        `/api/segments/${segmentId}/highlights/${highlightId}`
+      );
+    }
   }
 }
 
