@@ -43,8 +43,7 @@ export function SectionInsertButton({ beforeSequenceId }: Props) {
         onClick={handleClick}
         aria-label="Add section boundary"
       >
-        <span className="section-insert-icon">+</span>
-        <span className="section-insert-label">Add section boundary</span>
+        +
       </button>
       <span className="section-insert-line" />
     </div>

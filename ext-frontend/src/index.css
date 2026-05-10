@@ -1897,31 +1897,36 @@ button:disabled { cursor: default; }
   flex-direction: column;
 }
 
-/* --- Insert button zone (hover-reveal) --- */
+/* --- Insert button zone (hover-reveal, zero layout height) --- */
 .section-insert-zone {
   position: relative;
-  display: flex;
-  align-items: center;
-  height: 28px;
-  margin: -2px 0;
-  z-index: 1;
+  height: 16px;       /* hover target height */
+  margin: -8px 0;     /* net 0 — doesn't push segments apart */
+  z-index: 10;
+  overflow: visible;
 }
 
 .section-insert-btn {
+  position: absolute;
+  top: 50%;
+  left: 10px;
+  transform: translateY(-50%);
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
   border: 0;
-  background: transparent;
+  background: var(--bg-surface2);
+  border-radius: 50%;
   color: var(--text-3);
-  font-size: 0.78rem;
-  font-weight: 600;
-  padding: 4px 10px;
-  border-radius: 999px;
+  font-size: 0.80rem;
+  font-weight: 700;
+  line-height: 1;
   opacity: 0;
-  transition: opacity 0.18s ease, background 0.14s ease;
-  z-index: 2;
+  transition: opacity 0.15s ease, color 0.12s ease, background 0.12s ease;
   white-space: nowrap;
+  cursor: pointer;
 }
 
 .section-insert-zone:hover .section-insert-btn,
@@ -1934,33 +1939,21 @@ button:disabled { cursor: default; }
   color: var(--accent);
 }
 
+/* icon is now the only child — no separate .section-insert-icon needed */
 .section-insert-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  border: 1.5px solid var(--accent);
-  color: var(--accent);
-  font-size: 0.92rem;
-  font-weight: 700;
   line-height: 1;
 }
 
-.section-insert-label {
-  color: var(--text-3);
-}
-
-.section-insert-btn:hover .section-insert-label {
-  color: var(--accent);
-}
-
 .section-insert-line {
-  flex: 1;
+  position: absolute;
+  top: 50%;
+  left: 0;
+  right: 0;
   height: 1px;
+  transform: translateY(-50%);
   background: transparent;
-  transition: background 0.18s ease;
+  transition: background 0.15s ease;
+  pointer-events: none;
 }
 
 .section-insert-zone:hover .section-insert-line,
