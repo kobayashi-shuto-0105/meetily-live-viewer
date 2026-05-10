@@ -162,20 +162,16 @@ fn build_router(state: ServerState) -> Router {
             "/api/segments/{segment_id}/highlights/{highlight_id}",
             delete(delete_highlight),
         )
-        // セッション内の全セクションを取得する
+        // セクション取得 / 新規作成（同一パスに GET と POST を束ねる）
         .route(
             "/api/sessions/{session_id}/sections",
-            get(get_session_sections),
+            get(get_session_sections).post(create_section),
         )
-        // セクションを新規作成する
+        // セクション更新 / 削除（同一パスに PUT と DELETE を束ねる）
         .route(
-            "/api/sessions/{session_id}/sections",
-            post(create_section),
+            "/api/sections/{section_id}",
+            axum::routing::put(update_section).delete(delete_section),
         )
-        // セクションを更新する
-        .route("/api/sections/{section_id}", axum::routing::put(update_section))
-        // セクションを削除する
-        .route("/api/sections/{section_id}", delete(delete_section))
         // トークン認証ミドルウェアを適用する
         .layer(middleware::from_fn_with_state(
             state.clone(),
