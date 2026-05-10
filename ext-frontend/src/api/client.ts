@@ -25,6 +25,9 @@ import type {
   TranscriptRevisionResponse,
   TranscriptCommentResponse,
   TranscriptHighlightResponse,
+  CreateSectionRequest,
+  UpdateSectionRequest,
+  SectionResponse,
 } from "../types";
 
 // =============================================================================
@@ -262,6 +265,70 @@ export class ApiClient {
         response.status,
         errorText,
         `/api/segments/${segmentId}/highlights/${highlightId}`
+      );
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // セクション操作
+  // -------------------------------------------------------------------------
+
+  /**
+   * 指定セッション内の全セクションを取得する。
+   */
+  async getSessionSections(sessionId: string): Promise<SectionResponse[]> {
+    const res = await this.request<{ session_id: string; sections: SectionResponse[] }>(
+      `/api/sessions/${encodeURIComponent(sessionId)}/sections`
+    );
+    return res.sections ?? [];
+  }
+
+  /**
+   * セクションを新規作成する。
+   */
+  async createSection(
+    sessionId: string,
+    body: CreateSectionRequest
+  ): Promise<SectionResponse> {
+    return this.request<SectionResponse>(
+      `/api/sessions/${encodeURIComponent(sessionId)}/sections`,
+      {
+        method: "POST",
+        body: JSON.stringify(body),
+      }
+    );
+  }
+
+  /**
+   * セクションのタイトル・説明を更新する。
+   */
+  async updateSection(
+    sectionId: string,
+    body: UpdateSectionRequest
+  ): Promise<SectionResponse> {
+    return this.request<SectionResponse>(
+      `/api/sections/${encodeURIComponent(sectionId)}`,
+      {
+        method: "PUT",
+        body: JSON.stringify(body),
+      }
+    );
+  }
+
+  /**
+   * セクションを削除する。
+   */
+  async deleteSection(sectionId: string): Promise<void> {
+    const url = this.buildUrl(
+      `/api/sections/${encodeURIComponent(sectionId)}`
+    );
+    const response = await fetch(url, { method: "DELETE" });
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => "Unknown error");
+      throw new ApiError(
+        response.status,
+        errorText,
+        `/api/sections/${sectionId}`
       );
     }
   }

@@ -10,7 +10,10 @@ import type {
   ConnectionStatus,
   SessionInfo,
   TranscriptSegmentResponse,
+  Section,
+  TranscriptSectionPayload,
 } from "../types";
+import { apiClient } from "../api/client";
 
 // ----------------------------------------------------------------
 // State shape
@@ -27,6 +30,15 @@ interface TranscriptState {
 
   /** Segment currently showing the side comment composer. */
   commentInputSegmentId: string | null;
+
+  /** Section dividers inserted between segments. */
+  sections: Section[];
+
+  /** Section currently being created/edited inline (null = no editor open). */
+  sectionEditingId: string | null;
+
+  /** The sequenceId where a new section editor is open (before clicking Save). */
+  sectionInsertAt: number | null;
 
   // --- actions ---
   setConnectionStatus: (status: ConnectionStatus) => void;
@@ -48,6 +60,20 @@ interface TranscriptState {
   setSelectedSegmentId: (id: string | null) => void;
   openCommentInput: (id: string) => void;
   closeCommentInput: () => void;
+
+  // --- section actions ---
+  addSection: (beforeSequenceId: number, title: string, description: string) => void;
+  updateSection: (id: string, title: string, description: string) => void;
+  removeSection: (id: string) => void;
+  setSectionEditingId: (id: string | null) => void;
+  openSectionInsert: (beforeSequenceId: number) => void;
+  closeSectionInsert: () => void;
+  loadSections: (sections: Section[]) => void;
+
+  /** Apply a section from a WebSocket event (create or update) */
+  applySectionFromServer: (payload: TranscriptSectionPayload) => void;
+  /** Remove a section from a WebSocket event */
+  removeSectionFromServer: (id: string) => void;
 }
 
 // ----------------------------------------------------------------
@@ -66,13 +92,16 @@ function toSortedArray(
 // Store
 // ----------------------------------------------------------------
 
-export const useTranscriptStore = create<TranscriptState>((set) => ({
+export const useTranscriptStore = create<TranscriptState>((set, get) => ({
   connectionStatus: "disconnected",
   session: null,
   segments: new Map(),
   sortedSegments: [],
   selectedSegmentId: null,
   commentInputSegmentId: null,
+  sections: [],
+  sectionEditingId: null,
+  sectionInsertAt: null,
 
   setConnectionStatus: (status) => set({ connectionStatus: status }),
 
@@ -83,6 +112,9 @@ export const useTranscriptStore = create<TranscriptState>((set) => ({
       sortedSegments: [],
       selectedSegmentId: null,
       commentInputSegmentId: null,
+      sections: [],
+      sectionEditingId: null,
+      sectionInsertAt: null,
     }),
 
   stopSession: () =>
@@ -267,6 +299,123 @@ export const useTranscriptStore = create<TranscriptState>((set) => ({
     set({ selectedSegmentId: id, commentInputSegmentId: id }),
 
   closeCommentInput: () => set({ commentInputSegmentId: null }),
+
+  // --- section actions ---
+
+  addSection: async (beforeSequenceId, title, description) => {
+    if (get().sections.some((s) => s.beforeSequenceId === beforeSequenceId)) return;
+
+    // Optimistic update with a temp ID so the UI responds immediately
+    const tempId = `temp-${crypto.randomUUID()}`;
+    const tempSection: Section = {
+      id: tempId,
+      title,
+      description,
+      beforeSequenceId,
+      createdAt: new Date().toISOString(),
+    };
+    set((state) => ({
+      sections: [...state.sections, tempSection].sort(
+        (a, b) => a.beforeSequenceId - b.beforeSequenceId
+      ),
+      sectionInsertAt: null,
+    }));
+
+    const sessionId = get().session?.sessionId;
+    if (!sessionId) return;
+
+    try {
+      const res = await apiClient.createSection(sessionId, { title, description, beforeSequenceId });
+      // Replace the temp section with the server-assigned ID so update/delete work correctly
+      set((state) => ({
+        sections: state.sections.map((s) =>
+          s.id === tempId
+            ? { id: res.id, title: res.title, description: res.description, beforeSequenceId: res.before_sequence_id, createdAt: res.created_at }
+            : s
+        ),
+      }));
+    } catch (e) {
+      console.warn("[sections] Failed to persist section, rolling back:", e);
+      set((state) => ({ sections: state.sections.filter((s) => s.id !== tempId) }));
+    }
+  },
+
+  updateSection: (id, title, description) =>
+    set((state) => {
+      // Fire-and-forget API call
+      apiClient.updateSection(id, { title, description }).catch((e) => {
+        console.warn("[sections] Failed to update section:", e);
+      });
+
+      return {
+        sections: state.sections.map((s) =>
+          s.id === id ? { ...s, title, description } : s
+        ),
+        sectionEditingId: null,
+      };
+    }),
+
+  removeSection: (id) =>
+    set((state) => {
+      // Fire-and-forget API call
+      apiClient.deleteSection(id).catch((e) => {
+        console.warn("[sections] Failed to delete section:", e);
+      });
+
+      return {
+        sections: state.sections.filter((s) => s.id !== id),
+      };
+    }),
+
+  setSectionEditingId: (id) => set({ sectionEditingId: id }),
+
+  openSectionInsert: (beforeSequenceId) =>
+    set({ sectionInsertAt: beforeSequenceId }),
+
+  closeSectionInsert: () => set({ sectionInsertAt: null }),
+
+  loadSections: (sections) =>
+    set({
+      sections: [...sections].sort((a, b) => a.beforeSequenceId - b.beforeSequenceId),
+    }),
+
+  applySectionFromServer: (payload) =>
+    set((state) => {
+      const section: Section = {
+        id: payload.id,
+        title: payload.title,
+        description: payload.description,
+        beforeSequenceId: payload.before_sequence_id,
+        createdAt: payload.created_at,
+      };
+
+      // Check if it already exists (update case)
+      const existing = state.sections.findIndex((s) => s.id === payload.id);
+      let newSections: Section[];
+      if (existing >= 0) {
+        newSections = state.sections.map((s) =>
+          s.id === payload.id ? section : s
+        );
+      } else {
+        // Avoid duplicate at same position
+        if (state.sections.some((s) => s.beforeSequenceId === payload.before_sequence_id)) {
+          newSections = state.sections.map((s) =>
+            s.beforeSequenceId === payload.before_sequence_id ? section : s
+          );
+        } else {
+          newSections = [...state.sections, section];
+        }
+      }
+
+      return {
+        sections: newSections.sort((a, b) => a.beforeSequenceId - b.beforeSequenceId),
+      };
+    }),
+
+  removeSectionFromServer: (id) =>
+    set((state) => ({
+      sections: state.sections.filter((s) => s.id !== id),
+    })),
 }));
 
 // ----------------------------------------------------------------
@@ -276,3 +425,13 @@ export const useTranscriptStore = create<TranscriptState>((set) => ({
 export const selectSortedSegments = (
   state: TranscriptState
 ): TranscriptSegmentView[] => state.sortedSegments;
+
+export const selectSectionsMap = (
+  state: TranscriptState
+): Map<number, Section> => {
+  const map = new Map<number, Section>();
+  for (const section of state.sections) {
+    map.set(section.beforeSequenceId, section);
+  }
+  return map;
+};

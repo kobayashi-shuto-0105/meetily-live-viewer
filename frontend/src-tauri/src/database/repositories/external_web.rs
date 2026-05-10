@@ -16,7 +16,7 @@ use uuid::Uuid;
 
 use crate::database::models::{
     ExternalRecordingSession, ExternalTranscriptComment, ExternalTranscriptHighlight,
-    ExternalTranscriptRevision, ExternalTranscriptSegment,
+    ExternalTranscriptRevision, ExternalTranscriptSection, ExternalTranscriptSegment,
 };
 
 /// External Web UI 用の DB 操作をまとめたリポジトリ構造体。
@@ -107,6 +107,18 @@ impl ExternalWebRepository {
         // 同セッションに属する全 segments にも meeting_id を伝播
         sqlx::query(
             "UPDATE external_transcript_segments
+             SET meeting_id = ?, updated_at = ?
+             WHERE session_id = ?",
+        )
+        .bind(meeting_id)
+        .bind(&now)
+        .bind(session_id)
+        .execute(&mut *tx)
+        .await?;
+
+        // 同セッションに属する全 sections にも meeting_id を伝播
+        sqlx::query(
+            "UPDATE external_transcript_sections
              SET meeting_id = ?, updated_at = ?
              WHERE session_id = ?",
         )
@@ -547,5 +559,158 @@ impl ExternalWebRepository {
         .await?;
 
         Ok(highlights)
+    }
+
+    // =========================================================================
+    // セクション操作
+    // =========================================================================
+
+    /// セッションに対するセクションを作成する。
+    pub async fn create_section(
+        pool: &SqlitePool,
+        session_id: &str,
+        title: &str,
+        description: &str,
+        before_sequence_id: i64,
+    ) -> Result<ExternalTranscriptSection, SqlxError> {
+        // Inherit the session's meeting_id if it has already been finalized
+        let meeting_id: Option<String> = sqlx::query_scalar(
+            "SELECT meeting_id FROM external_recording_sessions WHERE id = ?",
+        )
+        .bind(session_id)
+        .fetch_optional(pool)
+        .await?
+        .flatten();
+
+        let id = format!("ext-section-{}", Uuid::new_v4());
+        let now = chrono::Utc::now().to_rfc3339();
+
+        sqlx::query(
+            "INSERT INTO external_transcript_sections
+                (id, session_id, meeting_id, title, description, before_sequence_id, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&id)
+        .bind(session_id)
+        .bind(&meeting_id)
+        .bind(title)
+        .bind(description)
+        .bind(before_sequence_id)
+        .bind(&now)
+        .bind(&now)
+        .execute(pool)
+        .await?;
+
+        info!("Created section {} for session {}", id, session_id);
+
+        Ok(ExternalTranscriptSection {
+            id,
+            session_id: session_id.to_string(),
+            meeting_id,
+            title: title.to_string(),
+            description: description.to_string(),
+            before_sequence_id,
+            created_at: now.clone(),
+            updated_at: now,
+        })
+    }
+
+    /// セクションのタイトルと説明を更新する。
+    /// `description` が `None` の場合は既存値を維持する。
+    pub async fn update_section(
+        pool: &SqlitePool,
+        section_id: &str,
+        title: &str,
+        description: Option<&str>,
+    ) -> Result<ExternalTranscriptSection, SqlxError> {
+        let now = chrono::Utc::now().to_rfc3339();
+
+        match description {
+            Some(desc) => {
+                sqlx::query(
+                    "UPDATE external_transcript_sections
+                     SET title = ?, description = ?, updated_at = ?
+                     WHERE id = ?",
+                )
+                .bind(title)
+                .bind(desc)
+                .bind(&now)
+                .bind(section_id)
+                .execute(pool)
+                .await?;
+            }
+            None => {
+                sqlx::query(
+                    "UPDATE external_transcript_sections
+                     SET title = ?, updated_at = ?
+                     WHERE id = ?",
+                )
+                .bind(title)
+                .bind(&now)
+                .bind(section_id)
+                .execute(pool)
+                .await?;
+            }
+        }
+
+        // 更新後の行を返す
+        let section = sqlx::query_as::<_, ExternalTranscriptSection>(
+            "SELECT id, session_id, meeting_id, title, description, before_sequence_id, created_at, updated_at
+             FROM external_transcript_sections
+             WHERE id = ?",
+        )
+        .bind(section_id)
+        .fetch_one(pool)
+        .await?;
+
+        info!("Updated section {}", section_id);
+
+        Ok(section)
+    }
+
+    /// セクションを削除する。
+    pub async fn delete_section(pool: &SqlitePool, section_id: &str) -> Result<(), SqlxError> {
+        sqlx::query("DELETE FROM external_transcript_sections WHERE id = ?")
+            .bind(section_id)
+            .execute(pool)
+            .await?;
+
+        info!("Deleted section {}", section_id);
+        Ok(())
+    }
+
+    /// 指定セッションの全セクションを before_sequence_id 昇順で取得する。
+    pub async fn get_sections_by_session(
+        pool: &SqlitePool,
+        session_id: &str,
+    ) -> Result<Vec<ExternalTranscriptSection>, SqlxError> {
+        let sections = sqlx::query_as::<_, ExternalTranscriptSection>(
+            "SELECT id, session_id, meeting_id, title, description, before_sequence_id, created_at, updated_at
+             FROM external_transcript_sections
+             WHERE session_id = ?
+             ORDER BY before_sequence_id ASC",
+        )
+        .bind(session_id)
+        .fetch_all(pool)
+        .await?;
+
+        Ok(sections)
+    }
+
+    /// セクション ID からセクションを取得する。
+    pub async fn get_section_by_id(
+        pool: &SqlitePool,
+        section_id: &str,
+    ) -> Result<Option<ExternalTranscriptSection>, SqlxError> {
+        let section = sqlx::query_as::<_, ExternalTranscriptSection>(
+            "SELECT id, session_id, meeting_id, title, description, before_sequence_id, created_at, updated_at
+             FROM external_transcript_sections
+             WHERE id = ?",
+        )
+        .bind(section_id)
+        .fetch_optional(pool)
+        .await?;
+
+        Ok(section)
     }
 }

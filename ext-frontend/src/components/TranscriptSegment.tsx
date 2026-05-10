@@ -4,6 +4,7 @@ import type { TranscriptSegmentView } from "../types";
 import { useTranscriptStore } from "../stores/transcriptStore";
 import { apiClient } from "../api/client";
 import { TranscriptEditor } from "./TranscriptEditor";
+import { loadAuthorName } from "../stores/authorName";
 
 // ----------------------------------------------------------------
 // Highlight type helpers
@@ -238,7 +239,8 @@ function CommentComposer({ segmentId }: { segmentId: string }) {
     setSending(true);
     setError(null);
     try {
-      await apiClient.createComment(segmentId, { commentText: trimmed });
+      const authorName = loadAuthorName() ?? undefined;
+      await apiClient.createComment(segmentId, { commentText: trimmed, authorName });
       setText("");
       closeCommentInput();
     } catch {

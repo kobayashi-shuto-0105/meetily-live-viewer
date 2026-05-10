@@ -4,6 +4,8 @@ import type { WebSocketClient } from "./api/ws";
 import { apiClient } from "./api/client";
 import { useTranscriptStore } from "./stores/transcriptStore";
 import { TranscriptViewer } from "./components/TranscriptViewer";
+import { OnboardingModal } from "./components/OnboardingModal";
+import { loadAuthorName } from "./stores/authorName";
 import type { TranscriptSegmentResponse } from "./types";
 
 // ----------------------------------------------------------------
@@ -103,6 +105,7 @@ function createDevMockSegments(): TranscriptSegmentResponse[] {
 
 function App() {
   const [theme] = useState<Theme>(loadTheme);
+  const [showOnboarding, setShowOnboarding] = useState(() => loadAuthorName() === null);
 
   const wsRef = useRef<WebSocketClient | null>(null);
 
@@ -118,7 +121,10 @@ function App() {
     setMeetingId,
     restoreSession,
     loadSegments,
+    loadSections,
     setSelectedSegmentId,
+    applySectionFromServer,
+    removeSectionFromServer,
     session,
   } = useTranscriptStore();
 
@@ -148,6 +154,23 @@ function App() {
         const segments = await apiClient.getSessionTranscripts(current.session_id);
         console.log("[initialLoad] Loaded segments:", segments.length);
         loadSegments(segments);
+
+        // Load sections for this session (always call to clear stale state)
+        try {
+          const sections = await apiClient.getSessionSections(current.session_id);
+          loadSections(
+            sections.map((s) => ({
+              id: s.id,
+              title: s.title,
+              description: s.description,
+              beforeSequenceId: s.before_sequence_id,
+              createdAt: s.created_at,
+            }))
+          );
+          console.log("[initialLoad] Loaded sections:", sections.length);
+        } catch (e) {
+          console.warn("[initialLoad] Failed to load sections:", e);
+        }
       } catch (e) {
         // Log so the error is visible in DevTools — not a fatal failure
         console.warn("[initialLoad] Failed to restore session from REST API:", e);
@@ -205,6 +228,15 @@ function App() {
           case "TranscriptHighlightDeleted":
             removeHighlight(event.payload);
             break;
+          case "TranscriptSectionCreated":
+            applySectionFromServer(event.payload);
+            break;
+          case "TranscriptSectionUpdated":
+            applySectionFromServer(event.payload);
+            break;
+          case "TranscriptSectionDeleted":
+            removeSectionFromServer(event.payload.id);
+            break;
         }
       },
       onStatusChange: setConnectionStatus,
@@ -258,6 +290,9 @@ function App() {
 
   return (
     <div className="meetily-app">
+      {showOnboarding && (
+        <OnboardingModal onComplete={() => setShowOnboarding(false)} />
+      )}
       {/* Invisible hover trigger at top-center */}
       <div
         className="cmd-hotzone"

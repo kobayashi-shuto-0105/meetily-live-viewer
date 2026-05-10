@@ -108,6 +108,25 @@ pub struct ExternalTranscriptComment {
     pub updated_at: String,
 }
 
+/// セグメント間に挿入されるセクション区切りモデル。
+/// `before_sequence_id` でセグメントの直前に位置づけられる。
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+pub struct ExternalTranscriptSection {
+    pub id: String,
+    /// 所属する録音セッション ID
+    pub session_id: String,
+    /// 保存後に確定する meetings.id（録音中は None）
+    pub meeting_id: Option<String>,
+    /// セクションタイトル
+    pub title: String,
+    /// セクションの説明文
+    pub description: String,
+    /// このセクションが挿入される位置（直後のセグメントの sequence_id）
+    pub before_sequence_id: i64,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
 /// セグメント上の文字範囲ハイライト（マーカー）モデル。
 /// `anchor_start` / `anchor_end` が None ならセグメント全体ハイライト。
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
