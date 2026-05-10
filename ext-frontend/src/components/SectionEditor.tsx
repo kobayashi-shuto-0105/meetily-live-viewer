@@ -113,7 +113,9 @@ export function SectionEditor(props: Props) {
         >
           Cancel
         </button>
-        <span className="section-editor-hint">Press Enter to create</span>
+        <span className="section-editor-hint">
+          Press Enter to {isEdit ? "save" : "create"}
+        </span>
       </div>
     </div>
   );
