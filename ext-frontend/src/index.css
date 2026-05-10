@@ -1453,8 +1453,7 @@ button:disabled { cursor: default; }
   --sidecar-width: 280px;
   --comment-card-shrink: 62px;
   width: min(calc(100% - var(--sidecar-width) - 100px), var(--segment-width));
-  margin-left: max(50px, calc((100% - (var(--segment-width) + var(--sidecar-width))) / 2));
-  margin-right: auto;
+  margin: 0 auto;
   gap: 7px;
 }
 
@@ -1526,6 +1525,13 @@ button:disabled { cursor: default; }
     linear-gradient(180deg, rgba(255 255 255 / 0.17), rgba(255 255 255 / 0.045)),
     rgba(25 34 51 / 0.38);
   backdrop-filter: blur(30px) saturate(1.45);
+}
+
+@media (min-width: 981px) and (max-width: 1360px) {
+  .transcript-stage {
+    --segment-width: 820px;
+    --sidecar-width: 230px;
+  }
 }
 
 @media (max-width: 980px) {
