@@ -28,7 +28,10 @@ export type ExternalWebEvent =
   | { type: "TranscriptRevisionCreated"; payload: TranscriptRevisionPayload }
   | { type: "TranscriptCommentCreated"; payload: TranscriptCommentPayload }
   | { type: "TranscriptHighlightCreated"; payload: TranscriptHighlightPayload }
-  | { type: "TranscriptHighlightDeleted"; payload: TranscriptHighlightDeletedPayload };
+  | { type: "TranscriptHighlightDeleted"; payload: TranscriptHighlightDeletedPayload }
+  | { type: "TranscriptSectionCreated"; payload: TranscriptSectionPayload }
+  | { type: "TranscriptSectionUpdated"; payload: TranscriptSectionPayload }
+  | { type: "TranscriptSectionDeleted"; payload: TranscriptSectionDeletedPayload };
 
 // =============================================================================
 // イベントペイロード型
@@ -302,6 +305,47 @@ export interface Section {
   beforeSequenceId: number;
   /** 作成日時（ISO8601 形式） */
   createdAt: string;
+}
+
+/** WebSocket セクション作成/更新イベントのペイロード（snake_case: サーバーから受信） */
+export interface TranscriptSectionPayload {
+  id: string;
+  session_id: string;
+  meeting_id: string | null;
+  title: string;
+  description: string;
+  before_sequence_id: number;
+  created_at: string;
+}
+
+/** WebSocket セクション削除イベントのペイロード */
+export interface TranscriptSectionDeletedPayload {
+  id: string;
+  session_id: string;
+}
+
+/** POST /api/sessions/:id/sections のリクエストボディ */
+export interface CreateSectionRequest {
+  title: string;
+  description?: string;
+  beforeSequenceId: number;
+}
+
+/** PUT /api/sections/:id のリクエストボディ */
+export interface UpdateSectionRequest {
+  title: string;
+  description?: string;
+}
+
+/** セクション REST API レスポンス（snake_case） */
+export interface SectionResponse {
+  id: string;
+  session_id: string;
+  meeting_id: string | null;
+  title: string;
+  description: string;
+  before_sequence_id: number;
+  created_at: string;
 }
 
 // =============================================================================

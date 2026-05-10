@@ -118,7 +118,10 @@ function App() {
     setMeetingId,
     restoreSession,
     loadSegments,
+    loadSections,
     setSelectedSegmentId,
+    applySectionFromServer,
+    removeSectionFromServer,
     session,
   } = useTranscriptStore();
 
@@ -148,6 +151,25 @@ function App() {
         const segments = await apiClient.getSessionTranscripts(current.session_id);
         console.log("[initialLoad] Loaded segments:", segments.length);
         loadSegments(segments);
+
+        // Load sections for this session
+        try {
+          const sections = await apiClient.getSessionSections(current.session_id);
+          if (sections.length > 0) {
+            loadSections(
+              sections.map((s) => ({
+                id: s.id,
+                title: s.title,
+                description: s.description,
+                beforeSequenceId: s.before_sequence_id,
+                createdAt: s.created_at,
+              }))
+            );
+            console.log("[initialLoad] Loaded sections:", sections.length);
+          }
+        } catch (e) {
+          console.warn("[initialLoad] Failed to load sections:", e);
+        }
       } catch (e) {
         // Log so the error is visible in DevTools — not a fatal failure
         console.warn("[initialLoad] Failed to restore session from REST API:", e);
@@ -204,6 +226,15 @@ function App() {
             break;
           case "TranscriptHighlightDeleted":
             removeHighlight(event.payload);
+            break;
+          case "TranscriptSectionCreated":
+            applySectionFromServer(event.payload);
+            break;
+          case "TranscriptSectionUpdated":
+            applySectionFromServer(event.payload);
+            break;
+          case "TranscriptSectionDeleted":
+            removeSectionFromServer(event.payload.id);
             break;
         }
       },

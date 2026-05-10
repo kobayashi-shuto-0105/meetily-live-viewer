@@ -11,7 +11,9 @@ import type {
   SessionInfo,
   TranscriptSegmentResponse,
   Section,
+  TranscriptSectionPayload,
 } from "../types";
+import { apiClient } from "../api/client";
 
 // ----------------------------------------------------------------
 // State shape
@@ -66,6 +68,12 @@ interface TranscriptState {
   setSectionEditingId: (id: string | null) => void;
   openSectionInsert: (beforeSequenceId: number) => void;
   closeSectionInsert: () => void;
+  loadSections: (sections: Section[]) => void;
+
+  /** Apply a section from a WebSocket event (create or update) */
+  applySectionFromServer: (payload: TranscriptSectionPayload) => void;
+  /** Remove a section from a WebSocket event */
+  removeSectionFromServer: (id: string) => void;
 }
 
 // ----------------------------------------------------------------
@@ -302,6 +310,19 @@ export const useTranscriptStore = create<TranscriptState>((set) => ({
         beforeSequenceId,
         createdAt: new Date().toISOString(),
       };
+
+      // Fire-and-forget API call to persist the section
+      const sessionId = state.session?.sessionId;
+      if (sessionId) {
+        apiClient.createSection(sessionId, {
+          title,
+          description,
+          beforeSequenceId,
+        }).catch((e) => {
+          console.warn("[sections] Failed to persist section:", e);
+        });
+      }
+
       return {
         sections: [...state.sections, section].sort(
           (a, b) => a.beforeSequenceId - b.beforeSequenceId
@@ -311,17 +332,31 @@ export const useTranscriptStore = create<TranscriptState>((set) => ({
     }),
 
   updateSection: (id, title, description) =>
-    set((state) => ({
-      sections: state.sections.map((s) =>
-        s.id === id ? { ...s, title, description } : s
-      ),
-      sectionEditingId: null,
-    })),
+    set((state) => {
+      // Fire-and-forget API call
+      apiClient.updateSection(id, { title, description }).catch((e) => {
+        console.warn("[sections] Failed to update section:", e);
+      });
+
+      return {
+        sections: state.sections.map((s) =>
+          s.id === id ? { ...s, title, description } : s
+        ),
+        sectionEditingId: null,
+      };
+    }),
 
   removeSection: (id) =>
-    set((state) => ({
-      sections: state.sections.filter((s) => s.id !== id),
-    })),
+    set((state) => {
+      // Fire-and-forget API call
+      apiClient.deleteSection(id).catch((e) => {
+        console.warn("[sections] Failed to delete section:", e);
+      });
+
+      return {
+        sections: state.sections.filter((s) => s.id !== id),
+      };
+    }),
 
   setSectionEditingId: (id) => set({ sectionEditingId: id }),
 
@@ -329,6 +364,49 @@ export const useTranscriptStore = create<TranscriptState>((set) => ({
     set({ sectionInsertAt: beforeSequenceId }),
 
   closeSectionInsert: () => set({ sectionInsertAt: null }),
+
+  loadSections: (sections) =>
+    set({
+      sections: sections.sort((a, b) => a.beforeSequenceId - b.beforeSequenceId),
+    }),
+
+  applySectionFromServer: (payload) =>
+    set((state) => {
+      const section: Section = {
+        id: payload.id,
+        title: payload.title,
+        description: payload.description,
+        beforeSequenceId: payload.before_sequence_id,
+        createdAt: payload.created_at,
+      };
+
+      // Check if it already exists (update case)
+      const existing = state.sections.findIndex((s) => s.id === payload.id);
+      let newSections: Section[];
+      if (existing >= 0) {
+        newSections = state.sections.map((s) =>
+          s.id === payload.id ? section : s
+        );
+      } else {
+        // Avoid duplicate at same position
+        if (state.sections.some((s) => s.beforeSequenceId === payload.before_sequence_id)) {
+          newSections = state.sections.map((s) =>
+            s.beforeSequenceId === payload.before_sequence_id ? section : s
+          );
+        } else {
+          newSections = [...state.sections, section];
+        }
+      }
+
+      return {
+        sections: newSections.sort((a, b) => a.beforeSequenceId - b.beforeSequenceId),
+      };
+    }),
+
+  removeSectionFromServer: (id) =>
+    set((state) => ({
+      sections: state.sections.filter((s) => s.id !== id),
+    })),
 }));
 
 // ----------------------------------------------------------------
