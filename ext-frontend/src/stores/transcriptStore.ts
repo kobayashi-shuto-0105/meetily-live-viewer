@@ -10,6 +10,7 @@ import type {
   ConnectionStatus,
   SessionInfo,
   TranscriptSegmentResponse,
+  Section,
 } from "../types";
 
 // ----------------------------------------------------------------
@@ -27,6 +28,15 @@ interface TranscriptState {
 
   /** Segment currently showing the side comment composer. */
   commentInputSegmentId: string | null;
+
+  /** Section dividers inserted between segments. */
+  sections: Section[];
+
+  /** Section currently being created/edited inline (null = no editor open). */
+  sectionEditingId: string | null;
+
+  /** The sequenceId where a new section editor is open (before clicking Save). */
+  sectionInsertAt: number | null;
 
   // --- actions ---
   setConnectionStatus: (status: ConnectionStatus) => void;
@@ -48,6 +58,14 @@ interface TranscriptState {
   setSelectedSegmentId: (id: string | null) => void;
   openCommentInput: (id: string) => void;
   closeCommentInput: () => void;
+
+  // --- section actions ---
+  addSection: (beforeSequenceId: number, title: string, description: string) => void;
+  updateSection: (id: string, title: string, description: string) => void;
+  removeSection: (id: string) => void;
+  setSectionEditingId: (id: string | null) => void;
+  openSectionInsert: (beforeSequenceId: number) => void;
+  closeSectionInsert: () => void;
 }
 
 // ----------------------------------------------------------------
@@ -73,6 +91,9 @@ export const useTranscriptStore = create<TranscriptState>((set) => ({
   sortedSegments: [],
   selectedSegmentId: null,
   commentInputSegmentId: null,
+  sections: [],
+  sectionEditingId: null,
+  sectionInsertAt: null,
 
   setConnectionStatus: (status) => set({ connectionStatus: status }),
 
@@ -267,6 +288,47 @@ export const useTranscriptStore = create<TranscriptState>((set) => ({
     set({ selectedSegmentId: id, commentInputSegmentId: id }),
 
   closeCommentInput: () => set({ commentInputSegmentId: null }),
+
+  // --- section actions ---
+
+  addSection: (beforeSequenceId, title, description) =>
+    set((state) => {
+      // Don't add duplicate section at same position
+      if (state.sections.some((s) => s.beforeSequenceId === beforeSequenceId)) return state;
+      const section: Section = {
+        id: crypto.randomUUID(),
+        title,
+        description,
+        beforeSequenceId,
+        createdAt: new Date().toISOString(),
+      };
+      return {
+        sections: [...state.sections, section].sort(
+          (a, b) => a.beforeSequenceId - b.beforeSequenceId
+        ),
+        sectionInsertAt: null,
+      };
+    }),
+
+  updateSection: (id, title, description) =>
+    set((state) => ({
+      sections: state.sections.map((s) =>
+        s.id === id ? { ...s, title, description } : s
+      ),
+      sectionEditingId: null,
+    })),
+
+  removeSection: (id) =>
+    set((state) => ({
+      sections: state.sections.filter((s) => s.id !== id),
+    })),
+
+  setSectionEditingId: (id) => set({ sectionEditingId: id }),
+
+  openSectionInsert: (beforeSequenceId) =>
+    set({ sectionInsertAt: beforeSequenceId }),
+
+  closeSectionInsert: () => set({ sectionInsertAt: null }),
 }));
 
 // ----------------------------------------------------------------
@@ -276,3 +338,13 @@ export const useTranscriptStore = create<TranscriptState>((set) => ({
 export const selectSortedSegments = (
   state: TranscriptState
 ): TranscriptSegmentView[] => state.sortedSegments;
+
+export const selectSectionsMap = (
+  state: TranscriptState
+): Map<number, Section> => {
+  const map = new Map<number, Section>();
+  for (const section of state.sections) {
+    map.set(section.beforeSequenceId, section);
+  }
+  return map;
+};
