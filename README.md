@@ -141,6 +141,9 @@ API アクセスにはトークンが必要です（クエリパラメータ `?t
    External Web UI: access token auto-generated
    Token: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
    ```
+   > **ログの確認方法:** 開発モード（`dev-gpu.sh`）の場合はターミナルに直接出力されます。
+   > プロダクションビルドの場合は、ターミナルからアプリを起動するか、OS のログビューアで確認してください。
+   > 固定トークンを使いたい場合は、環境変数 `MEETILY_EXT_TOKEN` を設定してからアプリを起動してください。
 
 2. 外部デバイスのブラウザから:
    ```
