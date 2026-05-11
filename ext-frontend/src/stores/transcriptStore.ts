@@ -88,6 +88,24 @@ function toSortedArray(
   );
 }
 
+function createClientId(): string {
+  const randomUuid = globalThis.crypto?.randomUUID?.bind(globalThis.crypto);
+  if (randomUuid) return randomUuid();
+
+  const randomValues = globalThis.crypto?.getRandomValues?.bind(globalThis.crypto);
+  if (randomValues) {
+    const bytes = randomValues(new Uint8Array(16));
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0"));
+    return `${hex.slice(0, 4).join("")}-${hex.slice(4, 6).join("")}-${hex
+      .slice(6, 8)
+      .join("")}-${hex.slice(8, 10).join("")}-${hex.slice(10).join("")}`;
+  }
+
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 // ----------------------------------------------------------------
 // Store
 // ----------------------------------------------------------------
@@ -306,7 +324,7 @@ export const useTranscriptStore = create<TranscriptState>((set, get) => ({
     if (get().sections.some((s) => s.beforeSequenceId === beforeSequenceId)) return;
 
     // Optimistic update with a temp ID so the UI responds immediately
-    const tempId = `temp-${crypto.randomUUID()}`;
+    const tempId = `temp-${createClientId()}`;
     const tempSection: Section = {
       id: tempId,
       title,
