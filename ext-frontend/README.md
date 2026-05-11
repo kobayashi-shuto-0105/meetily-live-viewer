@@ -24,6 +24,8 @@ pnpm dev
 pnpm dev -- --host 0.0.0.0
 ```
 
+Vite 開発サーバーから `38391` の API を直接呼ぶ場合は別オリジンになるため、デスクトップアプリ起動時に `MEETILY_EXT_CORS_PERMISSIVE=true` を設定してください。production build を `http://<Meetily-PC-IP>:38391/` から開く場合は同一オリジンなので不要です。
+
 ## 環境変数
 
 | 変数名 | 説明 | デフォルト値 |
@@ -37,6 +39,7 @@ pnpm dev -- --host 0.0.0.0
 - Meetily デスクトップアプリが起動していること（External Web UI サーバーが `38391` ポートで待機）
 - production build ではこのUIがMeetilyアプリに同梱され、`http://<Meetily-PC-IP>:38391/` から直接配信される
 - トークン認証を有効にする場合は、デスクトップアプリ側で `MEETILY_EXT_TOKEN` を設定し、ブラウザで `http://<Meetily-PC-IP>:38391/?token=<トークン>` にアクセスする（未設定の場合は認証なしでアクセス可能）
+- `MEETILY_EXT_TOKEN` を未設定にするとLAN内から認証なしで閲覧・編集できます。信頼できないネットワークではトークン設定を推奨します。
 
 ## LAN 経由でのアクセス
 

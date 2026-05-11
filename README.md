@@ -134,6 +134,7 @@ http://localhost:38391/health    # 疎通確認
 ```
 
 トークン認証は**オプション**です。`MEETILY_EXT_TOKEN` を設定しない場合は認証なしでアクセスできます。
+LAN で使う場合、同じネットワーク上の端末から文字起こしの閲覧・編集APIにアクセスできるため、信頼できないネットワークでは `MEETILY_EXT_TOKEN` の設定を推奨します。
 
 ### LAN 内の別デバイスからアクセス
 
@@ -163,6 +164,8 @@ http://localhost:38391/health    # 疎通確認
 |---|---|---|
 | `MEETILY_EXT_BIND` | サーバーバインドアドレス | `0.0.0.0:38391` |
 | `MEETILY_EXT_TOKEN` | アクセストークン（未設定時は認証なし） | *(なし)* |
+| `MEETILY_EXT_UI_DIR` | 同梱UIの代わりに配信する静的ファイルディレクトリ（開発/検証用） | *(同梱リソース)* |
+| `MEETILY_EXT_CORS_PERMISSIVE` | `true` の場合のみ permissive CORS を有効化（開発用） | *(無効)* |
 
 ---
 
@@ -184,7 +187,7 @@ http://localhost:38391/health    # 疎通確認
 | `POST` | `/api/segments/{id}/highlights` | ハイライト追加 | オプション |
 | `DELETE` | `/api/segments/{id}/highlights/{hid}` | ハイライト削除 | オプション |
 
-> **認証「オプション」について:** `MEETILY_EXT_TOKEN` が設定されている場合のみ `?token=xxx` が必要になります。未設定時は全エンドポイントに認証なしでアクセスできます。
+> **認証「オプション」について:** `MEETILY_EXT_TOKEN` が設定されている場合のみ `?token=xxx` が必要になります。未設定時は全エンドポイントに認証なしでアクセスできます。LAN 公開時は必要に応じて `MEETILY_EXT_TOKEN` を設定してください。
 
 ---
 

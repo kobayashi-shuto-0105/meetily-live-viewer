@@ -105,7 +105,9 @@ pub async fn run(
     if token.is_some() {
         log::info!("External Web UI: token auth enabled (MEETILY_EXT_TOKEN is set)");
     } else {
-        log::info!("External Web UI: running without token auth (set MEETILY_EXT_TOKEN to enable)");
+        log::warn!(
+            "External Web UI: running without token auth. Set MEETILY_EXT_TOKEN for LAN use."
+        );
     }
 
     let state = ServerState {
@@ -164,7 +166,10 @@ fn build_router(state: ServerState) -> Router {
             get(get_meeting_transcripts),
         )
         // 文字起こし修正（revision）を作成する
-        .route("/api/segments/{segment_id}/revisions", post(create_revision))
+        .route(
+            "/api/segments/{segment_id}/revisions",
+            post(create_revision),
+        )
         // コメントを追加する
         .route("/api/segments/{segment_id}/comments", post(create_comment))
         // ハイライトを追加する
@@ -193,7 +198,7 @@ fn build_router(state: ServerState) -> Router {
             token_auth_middleware,
         ));
 
-    Router::new()
+    let router = Router::new()
         // ヘルスチェックは認証不要（監視ツール等から利用するため）
         .route("/health", get(health))
         // 認証が必要なルートをマージする
@@ -201,9 +206,19 @@ fn build_router(state: ServerState) -> Router {
         // それ以外の GET/HEAD は同梱した Vite build を返す。
         // API/WS ルートは上で先にマッチするため影響しない。
         .fallback(serve_external_web_ui)
-        // CORS: 開発時は全オリジン許可。LAN 公開時に絞る想定（プラン §8.6）
-        .layer(CorsLayer::permissive())
-        .with_state(state)
+        .with_state(state);
+
+    if env_flag_enabled("MEETILY_EXT_CORS_PERMISSIVE") {
+        router.layer(CorsLayer::permissive())
+    } else {
+        router
+    }
+}
+
+fn env_flag_enabled(name: &str) -> bool {
+    std::env::var(name)
+        .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
+        .unwrap_or(false)
 }
 
 // =============================================================================
@@ -284,22 +299,44 @@ fn should_fallback_to_index(request_path: &str, headers: &HeaderMap) -> bool {
 }
 
 async fn serve_static_file(path: PathBuf, head_only: bool) -> Response {
+    if head_only {
+        return match tokio::fs::metadata(&path).await {
+            Ok(metadata) if metadata.is_file() => static_response_builder(&path, metadata.len())
+                .body(Body::empty())
+                .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response()),
+            _ => StatusCode::NOT_FOUND.into_response(),
+        };
+    }
+
     match tokio::fs::read(&path).await {
         Ok(bytes) => {
-            let body = if head_only {
-                Body::empty()
-            } else {
-                Body::from(bytes)
-            };
-
-            Response::builder()
-                .status(StatusCode::OK)
-                .header(header::CONTENT_TYPE, content_type_for_path(&path))
-                .body(body)
+            let content_length = bytes.len() as u64;
+            static_response_builder(&path, content_length)
+                .body(Body::from(bytes))
                 .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
         }
         Err(_) => StatusCode::NOT_FOUND.into_response(),
     }
+}
+
+fn static_response_builder(path: &FsPath, content_length: u64) -> axum::http::response::Builder {
+    let mut builder = Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, content_type_for_path(path))
+        .header(header::CONTENT_LENGTH, content_length.to_string());
+
+    if is_cacheable_asset(path) {
+        builder = builder.header(header::CACHE_CONTROL, "public, max-age=31536000, immutable");
+    } else {
+        builder = builder.header(header::CACHE_CONTROL, "no-cache");
+    }
+
+    builder
+}
+
+fn is_cacheable_asset(path: &FsPath) -> bool {
+    path.components()
+        .any(|component| component.as_os_str() == "assets")
 }
 
 fn content_type_for_path(path: &FsPath) -> &'static str {
@@ -1068,10 +1105,7 @@ async fn update_section(
                     },
                 ));
 
-            log::info!(
-                "External Web UI: section updated (id={})",
-                section.id
-            );
+            log::info!("External Web UI: section updated (id={})", section.id);
 
             (
                 StatusCode::OK,
@@ -1151,10 +1185,7 @@ async fn delete_section(
                     },
                 ));
 
-            log::info!(
-                "External Web UI: section deleted (id={})",
-                section_id
-            );
+            log::info!("External Web UI: section deleted (id={})", section_id);
 
             StatusCode::NO_CONTENT.into_response()
         }
@@ -1526,10 +1557,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method("POST")
-                    .uri(&format!(
-                        "/api/segments/{}/revisions",
-                        segment.id
-                    ))
+                    .uri(&format!("/api/segments/{}/revisions", segment.id))
                     .header("content-type", "application/json")
                     .body(Body::from(
                         serde_json::to_string(&serde_json::json!({
@@ -1586,10 +1614,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method("POST")
-                    .uri(&format!(
-                        "/api/segments/{}/comments",
-                        segment.id
-                    ))
+                    .uri(&format!("/api/segments/{}/comments", segment.id))
                     .header("content-type", "application/json")
                     .body(Body::from(
                         serde_json::to_string(&serde_json::json!({
@@ -1647,10 +1672,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method("POST")
-                    .uri(&format!(
-                        "/api/segments/{}/highlights",
-                        segment.id
-                    ))
+                    .uri(&format!("/api/segments/{}/highlights", segment.id))
                     .header("content-type", "application/json")
                     .body(Body::from(
                         serde_json::to_string(&serde_json::json!({

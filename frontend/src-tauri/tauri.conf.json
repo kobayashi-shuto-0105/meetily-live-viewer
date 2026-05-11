@@ -7,7 +7,7 @@
         "frontendDist": "../out",
         "devUrl": "http://localhost:3118",
         "beforeDevCommand": "pnpm dev",
-        "beforeBuildCommand": "npm run build:all"
+        "beforeBuildCommand": "pnpm run build:all"
     },
     "app": {
         "windows": [
