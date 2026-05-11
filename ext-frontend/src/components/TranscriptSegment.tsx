@@ -157,7 +157,6 @@ export function TranscriptSegment({ segment }: Props) {
               {highlightKind === "fixme" && <Badge tone="fixme">FIXME</Badge>}
               <p className={`segment-text ${segment.isPartial ? "is-partial" : ""}`}>
                 {segment.displayText}
-                {segment.isPartial && <span className="partial-label">recognizing...</span>}
               </p>
             </div>
 

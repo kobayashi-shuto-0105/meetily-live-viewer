@@ -381,13 +381,6 @@ button:disabled { cursor: default; }
   font-style: italic;
 }
 
-.partial-label {
-  margin-left: 8px;
-  color: var(--warn);
-  font-size: 0.75rem;
-  font-style: normal;
-}
-
 .segment-badge {
   flex-shrink: 0;
   display: inline-flex;
