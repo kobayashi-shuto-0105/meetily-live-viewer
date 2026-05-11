@@ -29,6 +29,7 @@ import type {
   UpdateSectionRequest,
   SectionResponse,
 } from "../types";
+import { getRuntimeAccessToken } from "./runtime";
 
 // =============================================================================
 // API クライアント設定
@@ -72,9 +73,10 @@ export class ApiClient {
   constructor(options?: ApiClientOptions) {
     // Env var → empty string (same origin, works with Vite dev proxy)
     this.baseUrl = options?.baseUrl ?? import.meta.env.VITE_MEETILY_API_BASE ?? "";
+    const envToken = import.meta.env.VITE_MEETILY_ACCESS_TOKEN;
     const raw = options?.token !== undefined
       ? options.token
-      : (import.meta.env.VITE_MEETILY_ACCESS_TOKEN ?? null);
+      : (envToken && envToken.length > 0 ? envToken : getRuntimeAccessToken());
     this.token = raw && raw.length > 0 ? raw : null;
   }
 

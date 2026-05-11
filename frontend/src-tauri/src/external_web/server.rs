@@ -26,15 +26,17 @@
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::path::{Component, Path as FsPath, PathBuf};
 
 use axum::{
+    body::Body,
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
         Path, Query, State,
     },
-    http::StatusCode,
+    http::{header, HeaderMap, Method, StatusCode, Uri},
     middleware::{self, Next},
-    response::IntoResponse,
+    response::{IntoResponse, Response},
     routing::{delete, get, post},
     Json, Router,
 };
@@ -67,6 +69,8 @@ pub struct ServerState {
     pub token: Option<String>,
     /// SQLite コネクションプール（REST API の DB 操作に使用する）
     pub pool: SqlitePool,
+    /// 同梱された External Web UI の静的ファイルディレクトリ
+    pub web_ui_dir: Option<PathBuf>,
 }
 
 // =============================================================================
@@ -79,10 +83,15 @@ pub struct ServerState {
 /// # 引数
 /// - `external_state`: WebSocket broadcast チャネルと現在のセッション情報
 /// - `pool`: SQLite コネクションプール（REST API の DB 操作に使用する）
+/// - `web_ui_dir`: 同梱された External Web UI の静的ファイルディレクトリ
 ///
 /// # エラー
 /// バインドアドレスのパースや TCP リスナーの作成に失敗した場合にエラーを返す。
-pub async fn run(external_state: ExternalWebState, pool: SqlitePool) -> anyhow::Result<()> {
+pub async fn run(
+    external_state: ExternalWebState,
+    pool: SqlitePool,
+    web_ui_dir: Option<PathBuf>,
+) -> anyhow::Result<()> {
     // バインドアドレスを環境変数から取得する（デフォルトは全インターフェース = LAN 公開）
     let bind = std::env::var("MEETILY_EXT_BIND").unwrap_or_else(|_| "0.0.0.0:38391".to_string());
 
@@ -103,7 +112,21 @@ pub async fn run(external_state: ExternalWebState, pool: SqlitePool) -> anyhow::
         external_state,
         token,
         pool,
+        web_ui_dir,
     };
+
+    if let Some(dir) = &state.web_ui_dir {
+        if dir.join("index.html").is_file() {
+            log::info!("External Web UI assets served from {}", dir.display());
+        } else {
+            log::warn!(
+                "External Web UI assets not found at {} (API/WebSocket will still run)",
+                dir.display()
+            );
+        }
+    } else {
+        log::warn!("External Web UI assets directory is unavailable");
+    }
 
     // axum ルーターを構築する
     let router = build_router(state);
@@ -175,9 +198,129 @@ fn build_router(state: ServerState) -> Router {
         .route("/health", get(health))
         // 認証が必要なルートをマージする
         .merge(authenticated_routes)
+        // それ以外の GET/HEAD は同梱した Vite build を返す。
+        // API/WS ルートは上で先にマッチするため影響しない。
+        .fallback(serve_external_web_ui)
         // CORS: 開発時は全オリジン許可。LAN 公開時に絞る想定（プラン §8.6）
         .layer(CorsLayer::permissive())
         .with_state(state)
+}
+
+// =============================================================================
+// 静的 UI 配信
+// =============================================================================
+
+/// 同梱された External Web UI を配信する。
+///
+/// Vite の SPA build なので、実ファイルが存在する場合はそのファイルを返し、
+/// 拡張子のないパスは `index.html` にフォールバックする。
+async fn serve_external_web_ui(
+    State(state): State<ServerState>,
+    method: Method,
+    uri: Uri,
+    headers: HeaderMap,
+) -> Response {
+    if method != Method::GET && method != Method::HEAD {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+
+    if uri.path().starts_with("/api/") || uri.path() == "/ws" {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+
+    let Some(web_ui_dir) = state.web_ui_dir.as_ref() else {
+        return (
+            StatusCode::NOT_FOUND,
+            "External Web UI assets are not bundled",
+        )
+            .into_response();
+    };
+
+    let Some(path) = resolve_static_path(web_ui_dir, uri.path()) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+
+    if path.is_file() {
+        return serve_static_file(path, method == Method::HEAD).await;
+    }
+
+    if should_fallback_to_index(uri.path(), &headers) {
+        return serve_static_file(web_ui_dir.join("index.html"), method == Method::HEAD).await;
+    }
+
+    StatusCode::NOT_FOUND.into_response()
+}
+
+fn resolve_static_path(web_ui_dir: &FsPath, request_path: &str) -> Option<PathBuf> {
+    let relative = request_path.trim_start_matches('/');
+
+    if relative.is_empty() {
+        return Some(web_ui_dir.join("index.html"));
+    }
+
+    let path = FsPath::new(relative);
+    if path.components().any(|component| {
+        matches!(
+            component,
+            Component::ParentDir | Component::RootDir | Component::Prefix(_)
+        )
+    }) {
+        return None;
+    }
+
+    Some(web_ui_dir.join(path))
+}
+
+fn should_fallback_to_index(request_path: &str, headers: &HeaderMap) -> bool {
+    if FsPath::new(request_path).extension().is_some() {
+        return false;
+    }
+
+    headers
+        .get(header::ACCEPT)
+        .and_then(|value| value.to_str().ok())
+        .map(|accept| accept.contains("text/html") || accept.contains("*/*"))
+        .unwrap_or(true)
+}
+
+async fn serve_static_file(path: PathBuf, head_only: bool) -> Response {
+    match tokio::fs::read(&path).await {
+        Ok(bytes) => {
+            let body = if head_only {
+                Body::empty()
+            } else {
+                Body::from(bytes)
+            };
+
+            Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, content_type_for_path(&path))
+                .body(body)
+                .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+        }
+        Err(_) => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+fn content_type_for_path(path: &FsPath) -> &'static str {
+    match path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .unwrap_or("")
+    {
+        "html" => "text/html; charset=utf-8",
+        "js" | "mjs" => "text/javascript; charset=utf-8",
+        "css" => "text/css; charset=utf-8",
+        "json" => "application/json; charset=utf-8",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "svg" => "image/svg+xml",
+        "ico" => "image/x-icon",
+        "webp" => "image/webp",
+        "wasm" => "application/wasm",
+        "txt" => "text/plain; charset=utf-8",
+        _ => "application/octet-stream",
+    }
 }
 
 // =============================================================================
@@ -1177,6 +1320,7 @@ mod tests {
             external_state: ExternalWebState::new(),
             token: None,
             pool: test_pool().await,
+            web_ui_dir: None,
         }
     }
 
@@ -1186,6 +1330,7 @@ mod tests {
             external_state: ExternalWebState::new(),
             token: Some(token.to_string()),
             pool: test_pool().await,
+            web_ui_dir: None,
         }
     }
 

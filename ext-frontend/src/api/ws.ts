@@ -20,6 +20,7 @@
 // =============================================================================
 
 import type { ExternalWebEvent, ConnectionStatus } from "../types";
+import { getRuntimeAccessToken } from "./runtime";
 
 // =============================================================================
 // 定数
@@ -96,9 +97,10 @@ export function createWebSocketClient(
       return `${proto}//${window.location.host}/ws`;
     })();
 
+  const envToken = import.meta.env.VITE_MEETILY_ACCESS_TOKEN;
   const rawToken = options.token !== undefined
     ? options.token
-    : (import.meta.env.VITE_MEETILY_ACCESS_TOKEN ?? null);
+    : (envToken && envToken.length > 0 ? envToken : getRuntimeAccessToken());
   const token: string | null = rawToken && rawToken.length > 0 ? rawToken : null;
 
   // 内部状態

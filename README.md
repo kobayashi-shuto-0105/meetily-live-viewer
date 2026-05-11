@@ -105,7 +105,7 @@ TAURI_GPU_FEATURE=cuda  ./build-gpu.sh    # NVIDIA CUDA
 | Windows | `frontend/src-tauri/target/release/bundle/nsis/meetily_*-setup.exe` |
 | Linux | `frontend/src-tauri/target/release/bundle/appimage/meetily_*.AppImage` |
 
-> **プロダクションビルドでも** External Web UI サーバーは自動起動します。追加の設定は不要です。
+> **プロダクションビルドでも** External Web UI サーバーは自動起動します。`ext-frontend` の production build もアプリに同梱されるため、追加の Vite dev server は不要です。
 
 ### External Web UI（ext-frontend）の開発
 
@@ -129,6 +129,7 @@ Vite の dev proxy により、API リクエストは自動的に `http://127.0.
 デスクトップアプリが起動していれば、ブラウザで以下にアクセス:
 
 ```
+http://localhost:38391/           # External Web UI
 http://localhost:38391/health    # 疎通確認
 ```
 
@@ -141,20 +142,19 @@ http://localhost:38391/health    # 疎通確認
    http://<Meetily-PC-IP>:38391/health
    ```
 
-2. ext-frontend を使う場合は `.env` に以下を設定:
-   ```env
-   VITE_MEETILY_API_BASE=http://<Meetily-PC-IP>:38391
-   VITE_MEETILY_WS_URL=ws://<Meetily-PC-IP>:38391/ws
+2. External Web UI にアクセス:
+   ```
+   http://<Meetily-PC-IP>:38391/
    ```
 
-3. **トークン認証を使いたい場合**は、デスクトップアプリ側とext-frontend の両方にトークンを設定:
+3. **トークン認証を使いたい場合**は、デスクトップアプリ側でトークンを設定して起動し、ブラウザURLにも同じトークンを付ける:
    ```bash
    # デスクトップアプリ起動時
-   MEETILY_EXT_TOKEN=your-secret-token ./dev-gpu.sh
+   MEETILY_EXT_TOKEN=your-secret-token /Applications/meetily.app/Contents/MacOS/meetily
    ```
-   ```env
-   # ext-frontend/.env
-   VITE_MEETILY_ACCESS_TOKEN=your-secret-token
+   ブラウザ:
+   ```
+   http://<Meetily-PC-IP>:38391/?token=your-secret-token
    ```
 
 ### 環境変数

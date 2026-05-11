@@ -102,7 +102,7 @@ interface NameStepProps {
   onKeyDown: (e: KeyboardEvent<HTMLInputElement>) => void;
   onSubmit: () => void;
   isValid: boolean;
-  lastNameRef: RefObject<HTMLInputElement>;
+  lastNameRef: RefObject<HTMLInputElement | null>;
 }
 
 function NameStep({

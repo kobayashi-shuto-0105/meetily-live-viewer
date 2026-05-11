@@ -499,8 +499,19 @@ pub fn run() {
                     .db_manager
                     .pool()
                     .clone();
+                let web_ui_dir = std::env::var("MEETILY_EXT_UI_DIR")
+                    .ok()
+                    .filter(|value| !value.is_empty())
+                    .map(std::path::PathBuf::from)
+                    .or_else(|| {
+                        _app.handle()
+                            .path()
+                            .resource_dir()
+                            .ok()
+                            .map(|resource_dir| resource_dir.join("external-web-ui"))
+                    });
                 tauri::async_runtime::spawn(async move {
-                    if let Err(e) = external_web::server::run(ext_state, pool).await {
+                    if let Err(e) = external_web::server::run(ext_state, pool, web_ui_dir).await {
                         log::error!("External Web UI server failed: {}", e);
                     }
                 });

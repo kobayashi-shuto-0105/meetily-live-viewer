@@ -7,7 +7,7 @@
         "frontendDist": "../out",
         "devUrl": "http://localhost:3118",
         "beforeDevCommand": "pnpm dev",
-        "beforeBuildCommand": "pnpm build"
+        "beforeBuildCommand": "npm run build:all"
     },
     "app": {
         "windows": [
@@ -95,9 +95,10 @@
             "icons/app_icon.icns",
             "icons/app_icon.ico"
         ],
-        "resources": [
-            "templates/*.json"
-        ],
+        "resources": {
+            "templates/*.json": "templates/",
+            "../../ext-frontend/dist/": "external-web-ui/"
+        },
         "externalBin": [
             "binaries/llama-helper",
             "binaries/ffmpeg"
