@@ -20,9 +20,9 @@
 //   トークンは環境変数 `MEETILY_EXT_TOKEN` で設定する（未設定時は "dev-token"）。
 //
 // バインドアドレス:
-//   デフォルト: 127.0.0.1:38391（ローカルのみ）
-//   環境変数 `MEETILY_EXT_BIND` で変更可能（例: "0.0.0.0:38391" で LAN 公開）
-//   0.0.0.0 にバインドする場合はトークン必須を強制する（プラン §0.2）
+//   デフォルト: 0.0.0.0:38391（LAN 公開 = 外部 PC からアクセス可能）
+//   環境変数 `MEETILY_EXT_BIND` で変更可能（例: "127.0.0.1:38391" でローカルのみ）
+//   トークン未設定時は UUID v4 で自動生成し、ログに出力する
 // =============================================================================
 
 use std::collections::HashMap;
@@ -84,27 +84,26 @@ pub struct ServerState {
 /// # エラー
 /// バインドアドレスのパースや TCP リスナーの作成に失敗した場合にエラーを返す。
 pub async fn run(external_state: ExternalWebState, pool: SqlitePool) -> anyhow::Result<()> {
-    // 認証トークンを環境変数から取得する（ローカル開発のみ未設定時はデフォルト値）
+    // 認証トークンを環境変数から取得する（未設定時は自動生成）
     let token_from_env = std::env::var("MEETILY_EXT_TOKEN").ok();
 
-    // バインドアドレスを環境変数から取得する（デフォルトはローカルのみ）
-    let bind = std::env::var("MEETILY_EXT_BIND").unwrap_or_else(|_| "127.0.0.1:38391".to_string());
+    // バインドアドレスを環境変数から取得する（デフォルトは全インターフェース = LAN 公開）
+    let bind = std::env::var("MEETILY_EXT_BIND").unwrap_or_else(|_| "0.0.0.0:38391".to_string());
 
     let addr: SocketAddr = bind.parse()?;
 
     let token = match token_from_env {
         Some(token) if !token.is_empty() => token,
-        Some(_) if addr.ip().is_unspecified() => {
-            anyhow::bail!(
-                "MEETILY_EXT_TOKEN must be non-empty when binding to 0.0.0.0 (LAN/public access)"
-            );
+        _ => {
+            // トークン未設定の場合は UUID v4 で自動生成する
+            let generated = uuid::Uuid::new_v4().to_string();
+            log::info!("============================================================");
+            log::info!("  External Web UI: access token auto-generated");
+            log::info!("  Token: {}", generated);
+            log::info!("  Set MEETILY_EXT_TOKEN env var to use a fixed token.");
+            log::info!("============================================================");
+            generated
         }
-        None if addr.ip().is_unspecified() => {
-            anyhow::bail!(
-                "MEETILY_EXT_TOKEN must be set when binding to 0.0.0.0 (LAN/public access)"
-            );
-        }
-        _ => "dev-token".to_string(),
     };
 
     let state = ServerState {
