@@ -42,7 +42,12 @@ pnpm dev -- --host 0.0.0.0
 デスクトップアプリはデフォルトで `0.0.0.0:38391` にバインドするため、同一ネットワーク内の他のデバイスからアクセスできます。
 
 1. デスクトップアプリのログに表示されるアクセストークンを確認する
-2. 外部デバイスのブラウザから `http://<Meetily-PC-IP>:38391` にアクセスする
-3. トークンをクエリパラメータとして指定する（例: `?token=<トークン>`）
+2. 疎通確認: 外部デバイスのブラウザから `http://<Meetily-PC-IP>:38391/health` にアクセスする（認証不要）
+3. `.env` にトークンと接続先を設定して、Vite dev server 経由で UI を利用する:
+   ```
+   VITE_MEETILY_API_BASE=http://<Meetily-PC-IP>:38391
+   VITE_MEETILY_WS_URL=ws://<Meetily-PC-IP>:38391/ws
+   VITE_MEETILY_ACCESS_TOKEN=<トークン>
+   ```
 
 固定トークンを使いたい場合は、デスクトップアプリ起動前に環境変数 `MEETILY_EXT_TOKEN` を設定してください。
