@@ -35,7 +35,7 @@ pnpm dev -- --host 0.0.0.0
 ## 前提条件
 
 - Meetily デスクトップアプリが起動していること（External Web UI サーバーが `38391` ポートで待機）
-- トークンが Meetily 側の `MEETILY_EXT_TOKEN` と一致していること
+- トークン認証を有効にする場合は、デスクトップアプリ側で `MEETILY_EXT_TOKEN` を設定し、ext-frontend の `.env` で `VITE_MEETILY_ACCESS_TOKEN` に同じ値を指定する（未設定の場合は認証なしでアクセス可能）
 
 ## LAN 経由でのアクセス
 

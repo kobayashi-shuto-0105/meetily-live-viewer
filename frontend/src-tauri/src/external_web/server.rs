@@ -4,25 +4,24 @@
 // axum ベースの HTTP/WebSocket サーバーを提供する。
 // Tauri アプリの setup 内で `tokio::spawn` により非同期に起動される。
 //
-// エンドポイント一覧（プラン §8.6）:
-//   GET  /health                                - 疎通確認（認証不要）
-//   WS   /ws?token=xxx                          - リアルタイム WebSocket 購読
-//   GET  /api/sessions/current?token=xxx        - 現在の録音セッション取得
-//   GET  /api/sessions/{id}/transcripts?token=xxx - セッション内セグメント取得
-//   GET  /api/meetings/{id}/transcripts?token=xxx - 保存済み会議の文字起こし取得
-//   POST /api/segments/{id}/revisions?token=xxx  - 文字起こし修正
-//   POST /api/segments/{id}/comments?token=xxx   - コメント追加
-//   POST /api/segments/{id}/highlights?token=xxx - ハイライト追加
+// エンドポイント一覧:
+//   GET  /health                         - 疎通確認（認証不要）
+//   WS   /ws                             - リアルタイム WebSocket 購読
+//   GET  /api/sessions/current           - 現在の録音セッション取得
+//   GET  /api/sessions/{id}/transcripts  - セッション内セグメント取得
+//   GET  /api/meetings/{id}/transcripts  - 保存済み会議の文字起こし取得
+//   POST /api/segments/{id}/revisions    - 文字起こし修正
+//   POST /api/segments/{id}/comments     - コメント追加
+//   POST /api/segments/{id}/highlights   - ハイライト追加
 //
-// 認証方式（プラン §8.7）:
-//   クエリパラメータ `?token=xxx` でトークン認証する。
-//   WebSocket はブラウザから任意ヘッダーを付けづらいため、クエリパラメータを採用。
-//   トークンは環境変数 `MEETILY_EXT_TOKEN` で設定する（未設定時は UUID v4 で自動生成）。
+// 認証（オプション）:
+//   環境変数 `MEETILY_EXT_TOKEN` が設定されている場合のみ、
+//   クエリパラメータ `?token=xxx` によるトークン認証を有効化する。
+//   未設定の場合は認証なしで全エンドポイントにアクセス可能。
 //
 // バインドアドレス:
 //   デフォルト: 0.0.0.0:38391（LAN 公開 = 外部 PC からアクセス可能）
 //   環境変数 `MEETILY_EXT_BIND` で変更可能（例: "127.0.0.1:38391" でローカルのみ）
-//   トークン未設定時は UUID v4 で自動生成し、ログに出力する
 // =============================================================================
 
 use std::collections::HashMap;
@@ -64,8 +63,8 @@ use super::types::{
 pub struct ServerState {
     /// External Web UI の broadcast チャネルとセッション管理
     pub external_state: ExternalWebState,
-    /// API アクセス用の認証トークン
-    pub token: String,
+    /// API アクセス用の認証トークン（None の場合は認証スキップ）
+    pub token: Option<String>,
     /// SQLite コネクションプール（REST API の DB 操作に使用する）
     pub pool: SqlitePool,
 }
@@ -84,27 +83,21 @@ pub struct ServerState {
 /// # エラー
 /// バインドアドレスのパースや TCP リスナーの作成に失敗した場合にエラーを返す。
 pub async fn run(external_state: ExternalWebState, pool: SqlitePool) -> anyhow::Result<()> {
-    // 認証トークンを環境変数から取得する（未設定時は自動生成）
-    let token_from_env = std::env::var("MEETILY_EXT_TOKEN").ok();
-
     // バインドアドレスを環境変数から取得する（デフォルトは全インターフェース = LAN 公開）
     let bind = std::env::var("MEETILY_EXT_BIND").unwrap_or_else(|_| "0.0.0.0:38391".to_string());
 
     let addr: SocketAddr = bind.parse()?;
 
-    let token = match token_from_env {
-        Some(token) if !token.is_empty() => token,
-        _ => {
-            // トークン未設定の場合は UUID v4 で自動生成する
-            let generated = uuid::Uuid::new_v4().to_string();
-            log::info!("============================================================");
-            log::info!("  External Web UI: access token auto-generated");
-            log::info!("  Token: {}", generated);
-            log::info!("  Set MEETILY_EXT_TOKEN env var to use a fixed token.");
-            log::info!("============================================================");
-            generated
-        }
-    };
+    // 認証トークンを環境変数から取得する（未設定または空の場合は認証なし）
+    let token = std::env::var("MEETILY_EXT_TOKEN")
+        .ok()
+        .filter(|t| !t.is_empty());
+
+    if token.is_some() {
+        log::info!("External Web UI: token auth enabled (MEETILY_EXT_TOKEN is set)");
+    } else {
+        log::info!("External Web UI: running without token auth (set MEETILY_EXT_TOKEN to enable)");
+    }
 
     let state = ServerState {
         external_state,
@@ -191,27 +184,22 @@ fn build_router(state: ServerState) -> Router {
 // 認証ミドルウェア
 // =============================================================================
 
-/// クエリパラメータ `?token=xxx` でトークンを検証するミドルウェア。
-/// トークンが不一致の場合は 401 Unauthorized を返す。
-///
-/// WebSocket はブラウザから Authorization ヘッダーを付けられないため、
-/// クエリパラメータ方式を採用している（プラン §8.7）。
+/// オプショナルなトークン認証ミドルウェア。
+/// `ServerState.token` が `Some` の場合のみクエリパラメータ `?token=xxx` を検証する。
+/// `None` の場合は認証をスキップして次のハンドラへ進む。
 async fn token_auth_middleware(
     State(state): State<ServerState>,
     Query(params): Query<HashMap<String, String>>,
     request: axum::http::Request<axum::body::Body>,
     next: Next,
 ) -> Result<impl IntoResponse, StatusCode> {
-    // クエリパラメータからトークンを取得する
-    let provided_token = params.get("token").cloned().unwrap_or_default();
-
-    // サーバーに設定されたトークンと比較する
-    if provided_token != state.token {
-        log::warn!("External Web UI: unauthorized access attempt");
-        return Err(StatusCode::UNAUTHORIZED);
+    if let Some(expected) = &state.token {
+        let provided = params.get("token").map(|s| s.as_str()).unwrap_or("");
+        if provided != expected {
+            log::warn!("External Web UI: unauthorized access attempt");
+            return Err(StatusCode::UNAUTHORIZED);
+        }
     }
-
-    // トークンが一致した場合は次のハンドラへ進む
     Ok(next.run(request).await)
 }
 
@@ -1183,11 +1171,20 @@ mod tests {
         pool
     }
 
-    /// テスト用の ServerState を作成するヘルパー
+    /// テスト用の ServerState（認証なし）
     async fn test_state() -> ServerState {
         ServerState {
             external_state: ExternalWebState::new(),
-            token: "test-token".to_string(),
+            token: None,
+            pool: test_pool().await,
+        }
+    }
+
+    /// テスト用の ServerState（トークン認証あり）
+    async fn test_state_with_token(token: &str) -> ServerState {
+        ServerState {
+            external_state: ExternalWebState::new(),
+            token: Some(token.to_string()),
             pool: test_pool().await,
         }
     }
@@ -1210,10 +1207,28 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_current_session_requires_token() {
+    async fn test_current_session_without_token_auth() {
+        // トークン未設定時はトークンなしで 200 が返る
         let router = build_router(test_state().await);
 
-        // トークンなしでアクセスすると 401 が返る
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/api/sessions/current")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_current_session_requires_token_when_configured() {
+        // トークン設定済みの場合、トークンなしで 401 が返る
+        let router = build_router(test_state_with_token("secret").await);
+
         let response = router
             .oneshot(
                 Request::builder()
@@ -1229,13 +1244,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_current_session_with_valid_token() {
-        let router = build_router(test_state().await);
-
         // 正しいトークンでアクセスすると 200 が返る
+        let router = build_router(test_state_with_token("secret").await);
+
         let response = router
             .oneshot(
                 Request::builder()
-                    .uri("/api/sessions/current?token=test-token")
+                    .uri("/api/sessions/current?token=secret")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -1247,13 +1262,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_current_session_with_invalid_token() {
-        let router = build_router(test_state().await);
-
         // 不正なトークンでアクセスすると 401 が返る
+        let router = build_router(test_state_with_token("secret").await);
+
         let response = router
             .oneshot(
                 Request::builder()
-                    .uri("/api/sessions/current?token=wrong-token")
+                    .uri("/api/sessions/current?token=wrong")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -1270,7 +1285,7 @@ mod tests {
         let response = router
             .oneshot(
                 Request::builder()
-                    .uri("/api/sessions/current?token=test-token")
+                    .uri("/api/sessions/current")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -1294,7 +1309,7 @@ mod tests {
         let response = router
             .oneshot(
                 Request::builder()
-                    .uri("/api/sessions/nonexistent-session/transcripts?token=test-token")
+                    .uri("/api/sessions/nonexistent-session/transcripts")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -1318,7 +1333,7 @@ mod tests {
         let response = router
             .oneshot(
                 Request::builder()
-                    .uri("/api/meetings/nonexistent-meeting/transcripts?token=test-token")
+                    .uri("/api/meetings/nonexistent-meeting/transcripts")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -1367,7 +1382,7 @@ mod tests {
                 Request::builder()
                     .method("POST")
                     .uri(&format!(
-                        "/api/segments/{}/revisions?token=test-token",
+                        "/api/segments/{}/revisions",
                         segment.id
                     ))
                     .header("content-type", "application/json")
@@ -1427,7 +1442,7 @@ mod tests {
                 Request::builder()
                     .method("POST")
                     .uri(&format!(
-                        "/api/segments/{}/comments?token=test-token",
+                        "/api/segments/{}/comments",
                         segment.id
                     ))
                     .header("content-type", "application/json")
@@ -1488,7 +1503,7 @@ mod tests {
                 Request::builder()
                     .method("POST")
                     .uri(&format!(
-                        "/api/segments/{}/highlights?token=test-token",
+                        "/api/segments/{}/highlights",
                         segment.id
                     ))
                     .header("content-type", "application/json")

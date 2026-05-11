@@ -132,33 +132,29 @@ Vite の dev proxy により、API リクエストは自動的に `http://127.0.
 http://localhost:38391/health    # 疎通確認
 ```
 
-API アクセスにはトークンが必要です（クエリパラメータ `?token=xxx`）。
+トークン認証は**オプション**です。`MEETILY_EXT_TOKEN` を設定しない場合は認証なしでアクセスできます。
 
 ### LAN 内の別デバイスからアクセス
 
-1. デスクトップアプリのログ（ターミナル出力）でアクセストークンを確認:
-   ```
-   External Web UI: access token auto-generated
-   Token: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-   ```
-   > **ログの確認方法:** 開発モード（`dev-gpu.sh`）の場合はターミナルに直接出力されます。
-   > プロダクションビルドの場合は、ターミナルからアプリを起動するか、OS のログビューアで確認してください。
-   > 固定トークンを使いたい場合は、環境変数 `MEETILY_EXT_TOKEN` を設定してからアプリを起動してください。
-
-2. 外部デバイスのブラウザから疎通確認（認証不要）:
+1. 外部デバイスのブラウザから疎通確認:
    ```
    http://<Meetily-PC-IP>:38391/health
    ```
-   認証も確認したい場合:
-   ```
-   http://<Meetily-PC-IP>:38391/api/sessions/current?token=<トークン>
-   ```
 
-3. ext-frontend を使う場合は `.env` に以下を設定:
+2. ext-frontend を使う場合は `.env` に以下を設定:
    ```env
    VITE_MEETILY_API_BASE=http://<Meetily-PC-IP>:38391
    VITE_MEETILY_WS_URL=ws://<Meetily-PC-IP>:38391/ws
-   VITE_MEETILY_ACCESS_TOKEN=<トークン>
+   ```
+
+3. **トークン認証を使いたい場合**は、デスクトップアプリ側とext-frontend の両方にトークンを設定:
+   ```bash
+   # デスクトップアプリ起動時
+   MEETILY_EXT_TOKEN=your-secret-token ./dev-gpu.sh
+   ```
+   ```env
+   # ext-frontend/.env
+   VITE_MEETILY_ACCESS_TOKEN=your-secret-token
    ```
 
 ### 環境変数
@@ -166,7 +162,7 @@ API アクセスにはトークンが必要です（クエリパラメータ `?t
 | 変数名 | 説明 | デフォルト値 |
 |---|---|---|
 | `MEETILY_EXT_BIND` | サーバーバインドアドレス | `0.0.0.0:38391` |
-| `MEETILY_EXT_TOKEN` | 固定アクセストークン（未設定時は起動毎に自動生成） | *(自動生成)* |
+| `MEETILY_EXT_TOKEN` | アクセストークン（未設定時は認証なし） | *(なし)* |
 
 ---
 
@@ -175,18 +171,20 @@ API アクセスにはトークンが必要です（クエリパラメータ `?t
 | メソッド | パス | 説明 | 認証 |
 |---|---|---|---|
 | `GET` | `/health` | 疎通確認 | 不要 |
-| `WS` | `/ws?token=xxx` | リアルタイム WebSocket 購読 | 必要 |
-| `GET` | `/api/sessions/current` | 現在の録音セッション | 必要 |
-| `GET` | `/api/sessions/{id}/transcripts` | セッション内セグメント | 必要 |
-| `GET` | `/api/sessions/{id}/sections` | セクション一覧 | 必要 |
-| `POST` | `/api/sessions/{id}/sections` | セクション作成 | 必要 |
-| `PUT` | `/api/sections/{id}` | セクション更新 | 必要 |
-| `DELETE` | `/api/sections/{id}` | セクション削除 | 必要 |
-| `GET` | `/api/meetings/{id}/transcripts` | 保存済み会議の文字起こし | 必要 |
-| `POST` | `/api/segments/{id}/revisions` | 文字起こし修正 | 必要 |
-| `POST` | `/api/segments/{id}/comments` | コメント追加 | 必要 |
-| `POST` | `/api/segments/{id}/highlights` | ハイライト追加 | 必要 |
-| `DELETE` | `/api/segments/{id}/highlights/{hid}` | ハイライト削除 | 必要 |
+| `WS` | `/ws` | リアルタイム WebSocket 購読 | オプション |
+| `GET` | `/api/sessions/current` | 現在の録音セッション | オプション |
+| `GET` | `/api/sessions/{id}/transcripts` | セッション内セグメント | オプション |
+| `GET` | `/api/sessions/{id}/sections` | セクション一覧 | オプション |
+| `POST` | `/api/sessions/{id}/sections` | セクション作成 | オプション |
+| `PUT` | `/api/sections/{id}` | セクション更新 | オプション |
+| `DELETE` | `/api/sections/{id}` | セクション削除 | オプション |
+| `GET` | `/api/meetings/{id}/transcripts` | 保存済み会議の文字起こし | オプション |
+| `POST` | `/api/segments/{id}/revisions` | 文字起こし修正 | オプション |
+| `POST` | `/api/segments/{id}/comments` | コメント追加 | オプション |
+| `POST` | `/api/segments/{id}/highlights` | ハイライト追加 | オプション |
+| `DELETE` | `/api/segments/{id}/highlights/{hid}` | ハイライト削除 | オプション |
+
+> **認証「オプション」について:** `MEETILY_EXT_TOKEN` が設定されている場合のみ `?token=xxx` が必要になります。未設定時は全エンドポイントに認証なしでアクセスできます。
 
 ---
 

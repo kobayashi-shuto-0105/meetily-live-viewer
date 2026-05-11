@@ -49,8 +49,8 @@ export interface WebSocketClientOptions {
   /** WebSocket URL（省略時は環境変数から取得） */
   wsUrl?: string;
 
-  /** 認証トークン（省略時は環境変数から取得） */
-  token?: string;
+  /** 認証トークン（省略時は環境変数から取得、未設定なら認証なし） */
+  token?: string | null;
 }
 
 // =============================================================================
@@ -96,8 +96,10 @@ export function createWebSocketClient(
       return `${proto}//${window.location.host}/ws`;
     })();
 
-  const token: string =
-    options.token ?? import.meta.env.VITE_MEETILY_ACCESS_TOKEN ?? "dev-token";
+  const rawToken = options.token !== undefined
+    ? options.token
+    : (import.meta.env.VITE_MEETILY_ACCESS_TOKEN ?? null);
+  const token: string | null = rawToken && rawToken.length > 0 ? rawToken : null;
 
   // 内部状態
   let socket: WebSocket | null = null;
@@ -160,9 +162,10 @@ export function createWebSocketClient(
 
     setStatus("connecting");
 
-    // トークンをクエリパラメータに付与して接続する（サーバー側の認証方式に合わせる）
     const url = new URL(wsUrl);
-    url.searchParams.set("token", token);
+    if (token) {
+      url.searchParams.set("token", token);
+    }
 
     try {
       socket = new WebSocket(url.toString());
