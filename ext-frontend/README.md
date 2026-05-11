@@ -24,15 +24,29 @@ pnpm dev
 pnpm dev -- --host 0.0.0.0
 ```
 
+Vite 開発サーバーから `38391` の API を直接呼ぶ場合は別オリジンになるため、デスクトップアプリ起動時に `MEETILY_EXT_CORS_PERMISSIVE=true` を設定してください。production build を `http://<Meetily-PC-IP>:38391/` から開く場合は同一オリジンなので不要です。
+
 ## 環境変数
 
 | 変数名 | 説明 | デフォルト値 |
 |---|---|---|
-| `VITE_MEETILY_API_BASE` | Meetily API ベース URL | `http://127.0.0.1:38391` |
-| `VITE_MEETILY_WS_URL` | WebSocket 接続先 | `ws://127.0.0.1:38391/ws` |
-| `VITE_MEETILY_ACCESS_TOKEN` | 認証トークン | `dev-token` |
+| `VITE_MEETILY_API_BASE` | Meetily API ベース URL | 同一オリジン |
+| `VITE_MEETILY_WS_URL` | WebSocket 接続先 | 同一オリジンの `/ws` |
+| `VITE_MEETILY_ACCESS_TOKEN` | 認証トークン | *(なし)* |
 
 ## 前提条件
 
 - Meetily デスクトップアプリが起動していること（External Web UI サーバーが `38391` ポートで待機）
-- トークンが Meetily 側の `MEETILY_EXT_TOKEN` と一致していること
+- production build ではこのUIがMeetilyアプリに同梱され、`http://<Meetily-PC-IP>:38391/` から直接配信される
+- トークン認証を有効にする場合は、デスクトップアプリ側で `MEETILY_EXT_TOKEN` を設定し、ブラウザで `http://<Meetily-PC-IP>:38391/?token=<トークン>` にアクセスする（未設定の場合は認証なしでアクセス可能）
+- `MEETILY_EXT_TOKEN` を未設定にするとLAN内から認証なしで閲覧・編集できます。信頼できないネットワークではトークン設定を推奨します。
+
+## LAN 経由でのアクセス
+
+デスクトップアプリはデフォルトで `0.0.0.0:38391` にバインドするため、同一ネットワーク内の他のデバイスからアクセスできます。
+
+1. 疎通確認: 外部デバイスのブラウザから `http://<Meetily-PC-IP>:38391/health` にアクセスする（認証不要）
+2. UI を開く: `http://<Meetily-PC-IP>:38391/`
+3. トークン認証を使う場合: `http://<Meetily-PC-IP>:38391/?token=<トークン>`
+
+固定トークンを使いたい場合は、デスクトップアプリ起動前に環境変数 `MEETILY_EXT_TOKEN` を設定してください。

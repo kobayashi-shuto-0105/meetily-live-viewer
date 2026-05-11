@@ -6,6 +6,8 @@
     "scripts": {
         "dev": "next dev -p 3118",
         "build": "next build",
+        "build:external-web-ui": "pnpm --dir ../ext-frontend install --frozen-lockfile && pnpm --dir ../ext-frontend build",
+        "build:all": "pnpm run build && pnpm run build:external-web-ui",
         "export": "next export",
         "start": "next start -p 3118",
         "tauri": "tauri",

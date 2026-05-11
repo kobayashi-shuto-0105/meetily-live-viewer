@@ -13,8 +13,8 @@
 //   POST /api/segments/:id/highlights           - ハイライト追加
 //   DELETE /api/segments/:id/highlights/:hid    - ハイライト削除（トグル取り消し）
 //
-// 認証:
-//   全リクエストにクエリパラメータ `?token=xxx` を付与する。
+// 認証（オプション）:
+//   VITE_MEETILY_ACCESS_TOKEN が設定されている場合のみ `?token=xxx` を付与する。
 // =============================================================================
 
 import type {
@@ -29,6 +29,7 @@ import type {
   UpdateSectionRequest,
   SectionResponse,
 } from "../types";
+import { getRuntimeAccessToken } from "./runtime";
 
 // =============================================================================
 // API クライアント設定
@@ -38,8 +39,8 @@ import type {
 export interface ApiClientOptions {
   /** API ベース URL（省略時は環境変数から取得） */
   baseUrl?: string;
-  /** 認証トークン（省略時は環境変数から取得） */
-  token?: string;
+  /** 認証トークン（省略時は環境変数から取得、未設定なら認証なし） */
+  token?: string | null;
 }
 
 // =============================================================================
@@ -67,12 +68,16 @@ export interface CurrentSessionResponse {
  */
 export class ApiClient {
   private readonly baseUrl: string;
-  private readonly token: string;
+  private readonly token: string | null;
 
   constructor(options?: ApiClientOptions) {
     // Env var → empty string (same origin, works with Vite dev proxy)
     this.baseUrl = options?.baseUrl ?? import.meta.env.VITE_MEETILY_API_BASE ?? "";
-    this.token = options?.token ?? import.meta.env.VITE_MEETILY_ACCESS_TOKEN ?? "dev-token";
+    const envToken = import.meta.env.VITE_MEETILY_ACCESS_TOKEN;
+    const raw = options?.token !== undefined
+      ? options.token
+      : (envToken && envToken.length > 0 ? envToken : getRuntimeAccessToken());
+    this.token = raw && raw.length > 0 ? raw : null;
   }
 
   // -------------------------------------------------------------------------
@@ -80,14 +85,14 @@ export class ApiClient {
   // -------------------------------------------------------------------------
 
   /**
-   * 認証トークン付きの URL を生成する。
-   * 全リクエストにクエリパラメータ `?token=xxx` を付与する。
+   * URL を生成する。トークンが設定されている場合のみ `?token=xxx` を付与する。
    */
   private buildUrl(path: string): string {
-    // When baseUrl is empty, resolve against the current page origin (proxy mode)
     const base = this.baseUrl || window.location.origin;
     const url = new URL(path, base);
-    url.searchParams.set("token", this.token);
+    if (this.token) {
+      url.searchParams.set("token", this.token);
+    }
     return url.toString();
   }
 

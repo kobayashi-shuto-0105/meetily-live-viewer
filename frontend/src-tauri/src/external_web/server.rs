@@ -4,38 +4,39 @@
 // axum ベースの HTTP/WebSocket サーバーを提供する。
 // Tauri アプリの setup 内で `tokio::spawn` により非同期に起動される。
 //
-// エンドポイント一覧（プラン §8.6）:
-//   GET  /health                                - 疎通確認（認証不要）
-//   WS   /ws?token=xxx                          - リアルタイム WebSocket 購読
-//   GET  /api/sessions/current?token=xxx        - 現在の録音セッション取得
-//   GET  /api/sessions/{id}/transcripts?token=xxx - セッション内セグメント取得
-//   GET  /api/meetings/{id}/transcripts?token=xxx - 保存済み会議の文字起こし取得
-//   POST /api/segments/{id}/revisions?token=xxx  - 文字起こし修正
-//   POST /api/segments/{id}/comments?token=xxx   - コメント追加
-//   POST /api/segments/{id}/highlights?token=xxx - ハイライト追加
+// エンドポイント一覧:
+//   GET  /health                         - 疎通確認（認証不要）
+//   WS   /ws                             - リアルタイム WebSocket 購読
+//   GET  /api/sessions/current           - 現在の録音セッション取得
+//   GET  /api/sessions/{id}/transcripts  - セッション内セグメント取得
+//   GET  /api/meetings/{id}/transcripts  - 保存済み会議の文字起こし取得
+//   POST /api/segments/{id}/revisions    - 文字起こし修正
+//   POST /api/segments/{id}/comments     - コメント追加
+//   POST /api/segments/{id}/highlights   - ハイライト追加
 //
-// 認証方式（プラン §8.7）:
-//   クエリパラメータ `?token=xxx` でトークン認証する。
-//   WebSocket はブラウザから任意ヘッダーを付けづらいため、クエリパラメータを採用。
-//   トークンは環境変数 `MEETILY_EXT_TOKEN` で設定する（未設定時は "dev-token"）。
+// 認証（オプション）:
+//   環境変数 `MEETILY_EXT_TOKEN` が設定されている場合のみ、
+//   クエリパラメータ `?token=xxx` によるトークン認証を有効化する。
+//   未設定の場合は認証なしで全エンドポイントにアクセス可能。
 //
 // バインドアドレス:
-//   デフォルト: 127.0.0.1:38391（ローカルのみ）
-//   環境変数 `MEETILY_EXT_BIND` で変更可能（例: "0.0.0.0:38391" で LAN 公開）
-//   0.0.0.0 にバインドする場合はトークン必須を強制する（プラン §0.2）
+//   デフォルト: 0.0.0.0:38391（LAN 公開 = 外部 PC からアクセス可能）
+//   環境変数 `MEETILY_EXT_BIND` で変更可能（例: "127.0.0.1:38391" でローカルのみ）
 // =============================================================================
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::path::{Component, Path as FsPath, PathBuf};
 
 use axum::{
+    body::Body,
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
         Path, Query, State,
     },
-    http::StatusCode,
+    http::{header, HeaderMap, Method, StatusCode, Uri},
     middleware::{self, Next},
-    response::IntoResponse,
+    response::{IntoResponse, Response},
     routing::{delete, get, post},
     Json, Router,
 };
@@ -64,10 +65,12 @@ use super::types::{
 pub struct ServerState {
     /// External Web UI の broadcast チャネルとセッション管理
     pub external_state: ExternalWebState,
-    /// API アクセス用の認証トークン
-    pub token: String,
+    /// API アクセス用の認証トークン（None の場合は認証スキップ）
+    pub token: Option<String>,
     /// SQLite コネクションプール（REST API の DB 操作に使用する）
     pub pool: SqlitePool,
+    /// 同梱された External Web UI の静的ファイルディレクトリ
+    pub web_ui_dir: Option<PathBuf>,
 }
 
 // =============================================================================
@@ -80,38 +83,52 @@ pub struct ServerState {
 /// # 引数
 /// - `external_state`: WebSocket broadcast チャネルと現在のセッション情報
 /// - `pool`: SQLite コネクションプール（REST API の DB 操作に使用する）
+/// - `web_ui_dir`: 同梱された External Web UI の静的ファイルディレクトリ
 ///
 /// # エラー
 /// バインドアドレスのパースや TCP リスナーの作成に失敗した場合にエラーを返す。
-pub async fn run(external_state: ExternalWebState, pool: SqlitePool) -> anyhow::Result<()> {
-    // 認証トークンを環境変数から取得する（ローカル開発のみ未設定時はデフォルト値）
-    let token_from_env = std::env::var("MEETILY_EXT_TOKEN").ok();
-
-    // バインドアドレスを環境変数から取得する（デフォルトはローカルのみ）
-    let bind = std::env::var("MEETILY_EXT_BIND").unwrap_or_else(|_| "127.0.0.1:38391".to_string());
+pub async fn run(
+    external_state: ExternalWebState,
+    pool: SqlitePool,
+    web_ui_dir: Option<PathBuf>,
+) -> anyhow::Result<()> {
+    // バインドアドレスを環境変数から取得する（デフォルトは全インターフェース = LAN 公開）
+    let bind = std::env::var("MEETILY_EXT_BIND").unwrap_or_else(|_| "0.0.0.0:38391".to_string());
 
     let addr: SocketAddr = bind.parse()?;
 
-    let token = match token_from_env {
-        Some(token) if !token.is_empty() => token,
-        Some(_) if addr.ip().is_unspecified() => {
-            anyhow::bail!(
-                "MEETILY_EXT_TOKEN must be non-empty when binding to 0.0.0.0 (LAN/public access)"
-            );
-        }
-        None if addr.ip().is_unspecified() => {
-            anyhow::bail!(
-                "MEETILY_EXT_TOKEN must be set when binding to 0.0.0.0 (LAN/public access)"
-            );
-        }
-        _ => "dev-token".to_string(),
-    };
+    // 認証トークンを環境変数から取得する（未設定または空の場合は認証なし）
+    let token = std::env::var("MEETILY_EXT_TOKEN")
+        .ok()
+        .filter(|t| !t.is_empty());
+
+    if token.is_some() {
+        log::info!("External Web UI: token auth enabled (MEETILY_EXT_TOKEN is set)");
+    } else {
+        log::warn!(
+            "External Web UI: running without token auth. Set MEETILY_EXT_TOKEN for LAN use."
+        );
+    }
 
     let state = ServerState {
         external_state,
         token,
         pool,
+        web_ui_dir,
     };
+
+    if let Some(dir) = &state.web_ui_dir {
+        if dir.join("index.html").is_file() {
+            log::info!("External Web UI assets served from {}", dir.display());
+        } else {
+            log::warn!(
+                "External Web UI assets not found at {} (API/WebSocket will still run)",
+                dir.display()
+            );
+        }
+    } else {
+        log::warn!("External Web UI assets directory is unavailable");
+    }
 
     // axum ルーターを構築する
     let router = build_router(state);
@@ -149,7 +166,10 @@ fn build_router(state: ServerState) -> Router {
             get(get_meeting_transcripts),
         )
         // 文字起こし修正（revision）を作成する
-        .route("/api/segments/{segment_id}/revisions", post(create_revision))
+        .route(
+            "/api/segments/{segment_id}/revisions",
+            post(create_revision),
+        )
         // コメントを追加する
         .route("/api/segments/{segment_id}/comments", post(create_comment))
         // ハイライトを追加する
@@ -178,41 +198,188 @@ fn build_router(state: ServerState) -> Router {
             token_auth_middleware,
         ));
 
-    Router::new()
+    let router = Router::new()
         // ヘルスチェックは認証不要（監視ツール等から利用するため）
         .route("/health", get(health))
         // 認証が必要なルートをマージする
         .merge(authenticated_routes)
-        // CORS: 開発時は全オリジン許可。LAN 公開時に絞る想定（プラン §8.6）
-        .layer(CorsLayer::permissive())
-        .with_state(state)
+        // それ以外の GET/HEAD は同梱した Vite build を返す。
+        // API/WS ルートは上で先にマッチするため影響しない。
+        .fallback(serve_external_web_ui)
+        .with_state(state);
+
+    if env_flag_enabled("MEETILY_EXT_CORS_PERMISSIVE") {
+        router.layer(CorsLayer::permissive())
+    } else {
+        router
+    }
+}
+
+fn env_flag_enabled(name: &str) -> bool {
+    std::env::var(name)
+        .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
+        .unwrap_or(false)
+}
+
+// =============================================================================
+// 静的 UI 配信
+// =============================================================================
+
+/// 同梱された External Web UI を配信する。
+///
+/// Vite の SPA build なので、実ファイルが存在する場合はそのファイルを返し、
+/// 拡張子のないパスは `index.html` にフォールバックする。
+async fn serve_external_web_ui(
+    State(state): State<ServerState>,
+    method: Method,
+    uri: Uri,
+    headers: HeaderMap,
+) -> Response {
+    if method != Method::GET && method != Method::HEAD {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+
+    if uri.path().starts_with("/api/") || uri.path() == "/ws" {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+
+    let Some(web_ui_dir) = state.web_ui_dir.as_ref() else {
+        return (
+            StatusCode::NOT_FOUND,
+            "External Web UI assets are not bundled",
+        )
+            .into_response();
+    };
+
+    let Some(path) = resolve_static_path(web_ui_dir, uri.path()) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+
+    if path.is_file() {
+        return serve_static_file(path, method == Method::HEAD).await;
+    }
+
+    if should_fallback_to_index(uri.path(), &headers) {
+        return serve_static_file(web_ui_dir.join("index.html"), method == Method::HEAD).await;
+    }
+
+    StatusCode::NOT_FOUND.into_response()
+}
+
+fn resolve_static_path(web_ui_dir: &FsPath, request_path: &str) -> Option<PathBuf> {
+    let relative = request_path.trim_start_matches('/');
+
+    if relative.is_empty() {
+        return Some(web_ui_dir.join("index.html"));
+    }
+
+    let path = FsPath::new(relative);
+    if path.components().any(|component| {
+        matches!(
+            component,
+            Component::ParentDir | Component::RootDir | Component::Prefix(_)
+        )
+    }) {
+        return None;
+    }
+
+    Some(web_ui_dir.join(path))
+}
+
+fn should_fallback_to_index(request_path: &str, headers: &HeaderMap) -> bool {
+    if FsPath::new(request_path).extension().is_some() {
+        return false;
+    }
+
+    headers
+        .get(header::ACCEPT)
+        .and_then(|value| value.to_str().ok())
+        .map(|accept| accept.contains("text/html") || accept.contains("*/*"))
+        .unwrap_or(true)
+}
+
+async fn serve_static_file(path: PathBuf, head_only: bool) -> Response {
+    if head_only {
+        return match tokio::fs::metadata(&path).await {
+            Ok(metadata) if metadata.is_file() => static_response_builder(&path, metadata.len())
+                .body(Body::empty())
+                .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response()),
+            _ => StatusCode::NOT_FOUND.into_response(),
+        };
+    }
+
+    match tokio::fs::read(&path).await {
+        Ok(bytes) => {
+            let content_length = bytes.len() as u64;
+            static_response_builder(&path, content_length)
+                .body(Body::from(bytes))
+                .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+        }
+        Err(_) => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+fn static_response_builder(path: &FsPath, content_length: u64) -> axum::http::response::Builder {
+    let mut builder = Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, content_type_for_path(path))
+        .header(header::CONTENT_LENGTH, content_length.to_string());
+
+    if is_cacheable_asset(path) {
+        builder = builder.header(header::CACHE_CONTROL, "public, max-age=31536000, immutable");
+    } else {
+        builder = builder.header(header::CACHE_CONTROL, "no-cache");
+    }
+
+    builder
+}
+
+fn is_cacheable_asset(path: &FsPath) -> bool {
+    path.components()
+        .any(|component| component.as_os_str() == "assets")
+}
+
+fn content_type_for_path(path: &FsPath) -> &'static str {
+    match path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .unwrap_or("")
+    {
+        "html" => "text/html; charset=utf-8",
+        "js" | "mjs" => "text/javascript; charset=utf-8",
+        "css" => "text/css; charset=utf-8",
+        "json" => "application/json; charset=utf-8",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "svg" => "image/svg+xml",
+        "ico" => "image/x-icon",
+        "webp" => "image/webp",
+        "wasm" => "application/wasm",
+        "txt" => "text/plain; charset=utf-8",
+        _ => "application/octet-stream",
+    }
 }
 
 // =============================================================================
 // 認証ミドルウェア
 // =============================================================================
 
-/// クエリパラメータ `?token=xxx` でトークンを検証するミドルウェア。
-/// トークンが不一致の場合は 401 Unauthorized を返す。
-///
-/// WebSocket はブラウザから Authorization ヘッダーを付けられないため、
-/// クエリパラメータ方式を採用している（プラン §8.7）。
+/// オプショナルなトークン認証ミドルウェア。
+/// `ServerState.token` が `Some` の場合のみクエリパラメータ `?token=xxx` を検証する。
+/// `None` の場合は認証をスキップして次のハンドラへ進む。
 async fn token_auth_middleware(
     State(state): State<ServerState>,
     Query(params): Query<HashMap<String, String>>,
     request: axum::http::Request<axum::body::Body>,
     next: Next,
 ) -> Result<impl IntoResponse, StatusCode> {
-    // クエリパラメータからトークンを取得する
-    let provided_token = params.get("token").cloned().unwrap_or_default();
-
-    // サーバーに設定されたトークンと比較する
-    if provided_token != state.token {
-        log::warn!("External Web UI: unauthorized access attempt");
-        return Err(StatusCode::UNAUTHORIZED);
+    if let Some(expected) = &state.token {
+        let provided = params.get("token").map(|s| s.as_str()).unwrap_or("");
+        if provided != expected {
+            log::warn!("External Web UI: unauthorized access attempt");
+            return Err(StatusCode::UNAUTHORIZED);
+        }
     }
-
-    // トークンが一致した場合は次のハンドラへ進む
     Ok(next.run(request).await)
 }
 
@@ -938,10 +1105,7 @@ async fn update_section(
                     },
                 ));
 
-            log::info!(
-                "External Web UI: section updated (id={})",
-                section.id
-            );
+            log::info!("External Web UI: section updated (id={})", section.id);
 
             (
                 StatusCode::OK,
@@ -1021,10 +1185,7 @@ async fn delete_section(
                     },
                 ));
 
-            log::info!(
-                "External Web UI: section deleted (id={})",
-                section_id
-            );
+            log::info!("External Web UI: section deleted (id={})", section_id);
 
             StatusCode::NO_CONTENT.into_response()
         }
@@ -1184,12 +1345,23 @@ mod tests {
         pool
     }
 
-    /// テスト用の ServerState を作成するヘルパー
+    /// テスト用の ServerState（認証なし）
     async fn test_state() -> ServerState {
         ServerState {
             external_state: ExternalWebState::new(),
-            token: "test-token".to_string(),
+            token: None,
             pool: test_pool().await,
+            web_ui_dir: None,
+        }
+    }
+
+    /// テスト用の ServerState（トークン認証あり）
+    async fn test_state_with_token(token: &str) -> ServerState {
+        ServerState {
+            external_state: ExternalWebState::new(),
+            token: Some(token.to_string()),
+            pool: test_pool().await,
+            web_ui_dir: None,
         }
     }
 
@@ -1211,10 +1383,28 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_current_session_requires_token() {
+    async fn test_current_session_without_token_auth() {
+        // トークン未設定時はトークンなしで 200 が返る
         let router = build_router(test_state().await);
 
-        // トークンなしでアクセスすると 401 が返る
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/api/sessions/current")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_current_session_requires_token_when_configured() {
+        // トークン設定済みの場合、トークンなしで 401 が返る
+        let router = build_router(test_state_with_token("secret").await);
+
         let response = router
             .oneshot(
                 Request::builder()
@@ -1230,13 +1420,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_current_session_with_valid_token() {
-        let router = build_router(test_state().await);
-
         // 正しいトークンでアクセスすると 200 が返る
+        let router = build_router(test_state_with_token("secret").await);
+
         let response = router
             .oneshot(
                 Request::builder()
-                    .uri("/api/sessions/current?token=test-token")
+                    .uri("/api/sessions/current?token=secret")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -1248,13 +1438,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_current_session_with_invalid_token() {
-        let router = build_router(test_state().await);
-
         // 不正なトークンでアクセスすると 401 が返る
+        let router = build_router(test_state_with_token("secret").await);
+
         let response = router
             .oneshot(
                 Request::builder()
-                    .uri("/api/sessions/current?token=wrong-token")
+                    .uri("/api/sessions/current?token=wrong")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -1271,7 +1461,7 @@ mod tests {
         let response = router
             .oneshot(
                 Request::builder()
-                    .uri("/api/sessions/current?token=test-token")
+                    .uri("/api/sessions/current")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -1295,7 +1485,7 @@ mod tests {
         let response = router
             .oneshot(
                 Request::builder()
-                    .uri("/api/sessions/nonexistent-session/transcripts?token=test-token")
+                    .uri("/api/sessions/nonexistent-session/transcripts")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -1319,7 +1509,7 @@ mod tests {
         let response = router
             .oneshot(
                 Request::builder()
-                    .uri("/api/meetings/nonexistent-meeting/transcripts?token=test-token")
+                    .uri("/api/meetings/nonexistent-meeting/transcripts")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -1367,10 +1557,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method("POST")
-                    .uri(&format!(
-                        "/api/segments/{}/revisions?token=test-token",
-                        segment.id
-                    ))
+                    .uri(&format!("/api/segments/{}/revisions", segment.id))
                     .header("content-type", "application/json")
                     .body(Body::from(
                         serde_json::to_string(&serde_json::json!({
@@ -1427,10 +1614,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method("POST")
-                    .uri(&format!(
-                        "/api/segments/{}/comments?token=test-token",
-                        segment.id
-                    ))
+                    .uri(&format!("/api/segments/{}/comments", segment.id))
                     .header("content-type", "application/json")
                     .body(Body::from(
                         serde_json::to_string(&serde_json::json!({
@@ -1488,10 +1672,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method("POST")
-                    .uri(&format!(
-                        "/api/segments/{}/highlights?token=test-token",
-                        segment.id
-                    ))
+                    .uri(&format!("/api/segments/{}/highlights", segment.id))
                     .header("content-type", "application/json")
                     .body(Body::from(
                         serde_json::to_string(&serde_json::json!({
