@@ -7,6 +7,15 @@ import { SectionEditor } from "./SectionEditor";
 import { SectionHeader } from "./SectionHeader";
 
 // ----------------------------------------------------------------
+// Constants
+// ----------------------------------------------------------------
+
+/** Pixel tolerance for detecting "at bottom" of scroll container */
+const SCROLL_BOTTOM_THRESHOLD = 60;
+/** Pixel tolerance for section offset comparison during jump navigation */
+const SECTION_OFFSET_TOLERANCE = 10;
+
+// ----------------------------------------------------------------
 // Public imperative handle for external scroll control
 // ----------------------------------------------------------------
 
@@ -49,7 +58,7 @@ export const TranscriptViewer = forwardRef<TranscriptViewerHandle>(
     const el = scrollRef.current;
     if (!el) return;
     // If scrolled to bottom (within 60px tolerance), enable follow
-    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < SCROLL_BOTTOM_THRESHOLD;
     setFollowMode(atBottom);
   }, []);
 
@@ -105,7 +114,7 @@ export const TranscriptViewer = forwardRef<TranscriptViewerHandle>(
     let targetSection = sortedSections[0];
     for (let i = sortedSections.length - 1; i >= 0; i--) {
       const secEl = el.querySelector(`[data-section-id="${sortedSections[i].id}"]`);
-      if (secEl && (secEl as HTMLElement).offsetTop < currentTop - 10) {
+      if (secEl && (secEl as HTMLElement).offsetTop < currentTop - SECTION_OFFSET_TOLERANCE) {
         targetSection = sortedSections[i];
         break;
       }
@@ -122,7 +131,7 @@ export const TranscriptViewer = forwardRef<TranscriptViewerHandle>(
     // Find the first section header that is below the current scroll position
     for (const sec of sortedSections) {
       const secEl = el.querySelector(`[data-section-id="${sec.id}"]`);
-      if (secEl && (secEl as HTMLElement).offsetTop > currentTop + 10) {
+      if (secEl && (secEl as HTMLElement).offsetTop > currentTop + SECTION_OFFSET_TOLERANCE) {
         scrollToSequenceId(sec.beforeSequenceId);
         return;
       }
