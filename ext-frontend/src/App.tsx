@@ -4,6 +4,8 @@ import type { WebSocketClient } from "./api/ws";
 import { apiClient } from "./api/client";
 import { useTranscriptStore } from "./stores/transcriptStore";
 import { TranscriptViewer } from "./components/TranscriptViewer";
+import type { TranscriptViewerHandle } from "./components/TranscriptViewer";
+import { CommandPalette } from "./components/CommandPalette";
 import { OnboardingModal } from "./components/OnboardingModal";
 import { loadAuthorName } from "./stores/authorName";
 import type { TranscriptSegmentResponse } from "./types";
@@ -104,10 +106,11 @@ function createDevMockSegments(): TranscriptSegmentResponse[] {
 // ----------------------------------------------------------------
 
 function App() {
-  const [theme] = useState<Theme>(loadTheme);
+  const [theme, setTheme] = useState<Theme>(loadTheme);
   const [showOnboarding, setShowOnboarding] = useState(() => loadAuthorName() === null);
 
   const wsRef = useRef<WebSocketClient | null>(null);
+  const viewerRef = useRef<TranscriptViewerHandle>(null);
 
   const {
     setConnectionStatus,
@@ -283,9 +286,24 @@ function App() {
       if (e.key === "Escape") {
         setCmdBarVisible(false);
       }
+      // Shift+↑: Jump to previous section
+      if (e.shiftKey && e.key === "ArrowUp" && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        e.preventDefault();
+        viewerRef.current?.jumpSectionUp();
+      }
+      // Shift+↓: Jump to next section
+      if (e.shiftKey && e.key === "ArrowDown" && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        e.preventDefault();
+        viewerRef.current?.jumpSectionDown();
+      }
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
+  }, []);
+
+  const handleChangeTheme = useCallback((newTheme: "dark" | "light") => {
+    setTheme(newTheme);
+    applyTheme(newTheme);
   }, []);
 
   return (
@@ -299,6 +317,18 @@ function App() {
         onMouseEnter={showBar}
         onMouseLeave={scheduleHide}
       />
+
+      {/* Command Palette (full-featured overlay) */}
+      {cmdBarVisible && (
+        <CommandPalette
+          visible={cmdBarVisible}
+          onClose={() => setCmdBarVisible(false)}
+          onScrollToSection={(beforeSeqId) => viewerRef.current?.scrollToSection(beforeSeqId)}
+          onScrollToSegment={(segId) => viewerRef.current?.scrollToSegment(segId)}
+          onChangeTheme={handleChangeTheme}
+          currentTheme={theme}
+        />
+      )}
 
       <div className="app-frame">
         <header className="app-header">
@@ -316,15 +346,15 @@ function App() {
           </div>
 
           {title && <h1 className="meeting-title">{title}</h1>}
-          <CommandBar
-            visible={cmdBarVisible}
+          <CommandBarTrigger
             onMouseEnter={showBar}
             onMouseLeave={scheduleHide}
+            onClick={() => setCmdBarVisible(true)}
           />
           <ConnectionBadge />
         </header>
 
-        <TranscriptViewer />
+        <TranscriptViewer ref={viewerRef} />
       </div>
     </div>
   );
@@ -334,31 +364,29 @@ function App() {
 // Sub-components
 // ----------------------------------------------------------------
 
-function CommandBar({
-  visible,
+function CommandBarTrigger({
   onMouseEnter,
   onMouseLeave,
+  onClick,
 }: {
-  visible: boolean;
   onMouseEnter: () => void;
   onMouseLeave: () => void;
+  onClick: () => void;
 }) {
   return (
     <div
-      className={`command-bar${visible ? " is-visible" : ""}`}
+      className="command-bar is-visible"
       aria-label="Command entry"
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
+      onClick={onClick}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onClick(); }}
     >
       <span className="command-search" aria-hidden="true" />
-      <span className="command-placeholder">コメントを追加 / コマンドを入力</span>
+      <span className="command-placeholder">セクション検索 / コマンドを入力</span>
       <span className="command-kbd">⌘ P</span>
-      <button className="command-submit" type="button" aria-label="Submit command">
-        ↑
-      </button>
-      <div className="command-help" aria-hidden="true">
-        T: TODO <span>|</span> F: FIXME <span>|</span> ⌘ Enter: コメント <span>|</span> Esc: 閉じる
-      </div>
     </div>
   );
 }
