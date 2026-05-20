@@ -54,8 +54,14 @@ export function CommandPalette({
   const historyFetchedRef = useRef(false);
 
   // Fetch history when entering history mode
+  const prevQueryRef = useRef(query);
   useEffect(() => {
-    if (query.startsWith("#") && !historyFetchedRef.current) {
+    const wasHistory = prevQueryRef.current.startsWith("#");
+    const isHistory = query.startsWith("#");
+    prevQueryRef.current = query;
+
+    // Entering history mode: fetch data
+    if (isHistory && !historyFetchedRef.current) {
       historyFetchedRef.current = true;
       setHistoryLoading(true);
       apiClient
@@ -70,12 +76,14 @@ export function CommandPalette({
         })
         .finally(() => setHistoryLoading(false));
     }
-    // Reset when leaving history mode
-    if (!query.startsWith("#")) {
+    // Leaving history mode: schedule reset via microtask to avoid sync setState
+    if (wasHistory && !isHistory) {
       historyFetchedRef.current = false;
-      setHistoryItems([]);
-      setHistoryOffset(0);
-      setHistoryHasMore(true);
+      Promise.resolve().then(() => {
+        setHistoryItems([]);
+        setHistoryOffset(0);
+        setHistoryHasMore(true);
+      });
     }
   }, [query]);
 
@@ -95,8 +103,6 @@ export function CommandPalette({
       })
       .finally(() => setHistoryLoading(false));
   }, [historyLoading, historyHasMore, historyOffset]);
-
-  const sections = useTranscriptStore((s) => s.sections);
 
   // Determine mode from query prefix
   const mode: PaletteMode = useMemo(() => {
@@ -319,11 +325,15 @@ function buildHistoryItemsFromData(
 function formatSessionDate(isoString: string): string {
   try {
     const d = new Date(isoString);
+    const now = new Date();
+    const year = d.getFullYear();
     const month = d.getMonth() + 1;
     const day = d.getDate();
     const hours = d.getHours().toString().padStart(2, "0");
     const minutes = d.getMinutes().toString().padStart(2, "0");
-    return `${month}/${day} ${hours}:${minutes}`;
+    // Include year if different from current year
+    const yearStr = year !== now.getFullYear() ? `${year}/` : "";
+    return `${yearStr}${month}/${day} ${hours}:${minutes}`;
   } catch {
     return isoString;
   }
