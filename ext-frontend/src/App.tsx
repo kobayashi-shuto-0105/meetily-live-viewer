@@ -258,7 +258,8 @@ function App() {
   const title = session?.meetingTitle?.trim() ?? "";
 
   // ---- Command bar visibility (⌘P or top-center hover) ----
-  const [cmdBarVisible, setCmdBarVisible] = useState(false);
+  const [cmdBarHintVisible, setCmdBarHintVisible] = useState(false);
+  const [isPaletteOpen, setIsPaletteOpen] = useState(false);
   const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const showBar = useCallback(() => {
@@ -266,33 +267,41 @@ function App() {
       clearTimeout(hideTimerRef.current);
       hideTimerRef.current = null;
     }
-    setCmdBarVisible(true);
+    setCmdBarHintVisible(true);
   }, []);
 
   const scheduleHide = useCallback(() => {
-    hideTimerRef.current = setTimeout(() => setCmdBarVisible(false), 320);
+    hideTimerRef.current = setTimeout(() => setCmdBarHintVisible(false), 320);
   }, []);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      const isTypingTarget =
+        !!target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.isContentEditable);
+
       if ((e.metaKey || e.ctrlKey) && e.key === "p") {
         e.preventDefault();
         if (hideTimerRef.current) {
           clearTimeout(hideTimerRef.current);
           hideTimerRef.current = null;
         }
-        setCmdBarVisible((v) => !v);
+        setCmdBarHintVisible(true);
+        setIsPaletteOpen((v) => !v);
       }
       if (e.key === "Escape") {
-        setCmdBarVisible(false);
+        setIsPaletteOpen(false);
       }
       // Shift+↑: Jump to previous section
-      if (e.shiftKey && e.key === "ArrowUp" && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      if (!isTypingTarget && e.shiftKey && e.key === "ArrowUp" && !e.metaKey && !e.ctrlKey && !e.altKey) {
         e.preventDefault();
         viewerRef.current?.jumpSectionUp();
       }
       // Shift+↓: Jump to next section
-      if (e.shiftKey && e.key === "ArrowDown" && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      if (!isTypingTarget && e.shiftKey && e.key === "ArrowDown" && !e.metaKey && !e.ctrlKey && !e.altKey) {
         e.preventDefault();
         viewerRef.current?.jumpSectionDown();
       }
@@ -319,10 +328,10 @@ function App() {
       />
 
       {/* Command Palette (full-featured overlay) */}
-      {cmdBarVisible && (
+      {isPaletteOpen && (
         <CommandPalette
-          visible={cmdBarVisible}
-          onClose={() => setCmdBarVisible(false)}
+          visible={isPaletteOpen}
+          onClose={() => setIsPaletteOpen(false)}
           onScrollToSection={(beforeSeqId) => viewerRef.current?.scrollToSection(beforeSeqId)}
           onScrollToSegment={(segId) => viewerRef.current?.scrollToSegment(segId)}
           onChangeTheme={handleChangeTheme}
@@ -347,9 +356,13 @@ function App() {
 
           {title && <h1 className="meeting-title">{title}</h1>}
           <CommandBarTrigger
+            visible={cmdBarHintVisible || isPaletteOpen}
             onMouseEnter={showBar}
             onMouseLeave={scheduleHide}
-            onClick={() => setCmdBarVisible(true)}
+            onClick={() => {
+              setCmdBarHintVisible(true);
+              setIsPaletteOpen(true);
+            }}
           />
           <ConnectionBadge />
         </header>
@@ -365,24 +378,31 @@ function App() {
 // ----------------------------------------------------------------
 
 function CommandBarTrigger({
+  visible,
   onMouseEnter,
   onMouseLeave,
   onClick,
 }: {
+  visible: boolean;
   onMouseEnter: () => void;
   onMouseLeave: () => void;
   onClick: () => void;
 }) {
   return (
     <div
-      className="command-bar is-visible"
+      className={`command-bar${visible ? " is-visible" : ""}`}
       aria-label="Command entry"
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
       onClick={onClick}
       role="button"
       tabIndex={0}
-      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onClick(); }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onClick();
+        }
+      }}
     >
       <span className="command-search" aria-hidden="true" />
       <span className="command-placeholder">セクション検索 / コマンドを入力</span>

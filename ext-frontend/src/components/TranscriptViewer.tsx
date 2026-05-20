@@ -108,13 +108,19 @@ export const TranscriptViewer = forwardRef<TranscriptViewerHandle>(
     const el = scrollRef.current;
     if (!el) return;
 
+    const getSectionTop = (secEl: Element) => {
+      const sectionRect = secEl.getBoundingClientRect();
+      const containerRect = el.getBoundingClientRect();
+      return sectionRect.top - containerRect.top + el.scrollTop;
+    };
+
     // Find current visible section by scroll position
     const currentTop = el.scrollTop;
     // Find the last section header that is above the current scroll position
     let targetSection = sortedSections[0];
     for (let i = sortedSections.length - 1; i >= 0; i--) {
       const secEl = el.querySelector(`[data-section-id="${sortedSections[i].id}"]`);
-      if (secEl && (secEl as HTMLElement).offsetTop < currentTop - SECTION_OFFSET_TOLERANCE) {
+      if (secEl && getSectionTop(secEl) < currentTop - SECTION_OFFSET_TOLERANCE) {
         targetSection = sortedSections[i];
         break;
       }
@@ -127,11 +133,17 @@ export const TranscriptViewer = forwardRef<TranscriptViewerHandle>(
     const el = scrollRef.current;
     if (!el) return;
 
+    const getSectionTop = (secEl: Element) => {
+      const sectionRect = secEl.getBoundingClientRect();
+      const containerRect = el.getBoundingClientRect();
+      return sectionRect.top - containerRect.top + el.scrollTop;
+    };
+
     const currentTop = el.scrollTop;
     // Find the first section header that is below the current scroll position
     for (const sec of sortedSections) {
       const secEl = el.querySelector(`[data-section-id="${sec.id}"]`);
-      if (secEl && (secEl as HTMLElement).offsetTop > currentTop + SECTION_OFFSET_TOLERANCE) {
+      if (secEl && getSectionTop(secEl) > currentTop + SECTION_OFFSET_TOLERANCE) {
         scrollToSequenceId(sec.beforeSequenceId);
         return;
       }

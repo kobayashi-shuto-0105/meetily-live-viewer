@@ -14,6 +14,7 @@ interface PaletteItem {
   label: string;
   description?: string;
   action?: () => void;
+  segmentId?: string;
   /** For section items: associated section data */
   section?: Section;
 }
@@ -35,6 +36,7 @@ export function CommandPalette({
   visible,
   onClose,
   onScrollToSection,
+  onScrollToSegment,
   onChangeTheme,
   currentTheme,
 }: CommandPaletteProps) {
@@ -98,17 +100,30 @@ export function CommandPalette({
         item.action();
         return;
       }
+      if (item.segmentId && onScrollToSegment) {
+        onScrollToSegment(item.segmentId);
+        onClose();
+        return;
+      }
       // Default for section items: scroll to section
       if (item.section) {
         onScrollToSection(item.section.beforeSequenceId);
         onClose();
       }
     },
-    [onScrollToSection, onClose]
+    [onScrollToSection, onScrollToSegment, onClose]
   );
 
   const handleKeyDown = useCallback(
     (e: ReactKeyboardEvent<HTMLInputElement>) => {
+      if (items.length === 0) {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          onClose();
+        }
+        return;
+      }
+
       // Ctrl+N or Down → next item
       if (
         e.key === "ArrowDown" ||
@@ -146,6 +161,16 @@ export function CommandPalette({
     },
     [items, focusIndex, executeItem, onClose]
   );
+
+  useEffect(() => {
+    if (items.length === 0 && focusIndex !== 0) {
+      setFocusIndex(0);
+      return;
+    }
+    if (items.length > 0 && focusIndex > items.length - 1) {
+      setFocusIndex(items.length - 1);
+    }
+  }, [items.length, focusIndex]);
 
   // Preview panel content (only in sections mode)
   const previewContent = useMemo(() => {
@@ -286,8 +311,17 @@ function buildSectionItems(
   search: string
 ): PaletteItem[] {
   if (sections.length === 0) {
-    // Show all segments grouped as a flat list if no sections exist
-    return [];
+    return segments
+      .filter((seg) => {
+        if (!search) return true;
+        return seg.displayText.toLowerCase().includes(search);
+      })
+      .map((seg, idx) => ({
+        id: `segment-${seg.id}`,
+        label: `${idx + 1}. ${seg.displayText}`,
+        description: seg.timestamp || undefined,
+        segmentId: seg.id,
+      }));
   }
 
   const sorted = [...sections].sort((a, b) => a.beforeSequenceId - b.beforeSequenceId);
@@ -346,7 +380,7 @@ function buildSettingsItems(
       label: "To GitHub Repo Page",
       description: "GitHubリポジトリを開く",
       action: () => {
-        window.open("https://github.com/kobayashi-shuto-0105/meetily-live-viewer", "_blank");
+        window.open("https://github.com/kobayashi-shuto-0105/meetily-live-viewer", "_blank", "noopener,noreferrer");
         onClose();
       },
     },
