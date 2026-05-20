@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { KeyboardEvent as ReactKeyboardEvent } from "react";
-import { useTranscriptStore, selectSortedSegments } from "../stores/transcriptStore";
-import type { Section, TranscriptSegmentView } from "../types";
+import { useTranscriptStore } from "../stores/transcriptStore";
+import type { Section } from "../types";
 
 // ----------------------------------------------------------------
 // Types
@@ -14,7 +13,6 @@ interface PaletteItem {
   label: string;
   description?: string;
   action?: () => void;
-  segmentId?: string;
   /** For section items: associated section data */
   section?: Section;
 }
@@ -25,28 +23,25 @@ interface PaletteItem {
 
 interface CommandPaletteProps {
   visible: boolean;
+  query: string;
   onClose: () => void;
   onScrollToSection: (beforeSequenceId: number) => void;
-  onScrollToSegment?: (segmentId: string) => void;
   onChangeTheme: (theme: "dark" | "light") => void;
   currentTheme: "dark" | "light";
 }
 
 export function CommandPalette({
   visible,
+  query,
   onClose,
   onScrollToSection,
-  onScrollToSegment,
   onChangeTheme,
   currentTheme,
 }: CommandPaletteProps) {
-  const [query, setQuery] = useState("");
   const [focusIndex, setFocusIndex] = useState(0);
-  const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
   const sections = useTranscriptStore((s) => s.sections);
-  const segments = useTranscriptStore(selectSortedSegments);
 
   // Determine mode from query prefix
   const mode: PaletteMode = useMemo(() => {
@@ -62,28 +57,21 @@ export function CommandPalette({
       : query.slice(1).trim().toLowerCase();
 
     if (mode === "sections") {
-      return buildSectionItems(sections, segments, searchText);
+      return buildSectionItems(sections, searchText);
     }
     if (mode === "history") {
       return buildHistoryItems(searchText);
     }
     // settings
     return buildSettingsItems(searchText, currentTheme, onChangeTheme, onClose);
-  }, [mode, query, sections, segments, currentTheme, onChangeTheme, onClose]);
+  }, [mode, query, sections, currentTheme, onChangeTheme, onClose]);
 
-  // Reset focus when query changes (items change)
-  const handleQueryChange = useCallback((value: string) => {
-    setQuery(value);
-    setFocusIndex(0);
-  }, []);
-
-  // Focus input when palette opens; reset state via key prop on parent
+  // Reset focus when opened or query changes
   useEffect(() => {
     if (visible) {
-      const id = requestAnimationFrame(() => inputRef.current?.focus());
-      return () => cancelAnimationFrame(id);
+      setFocusIndex(0);
     }
-  }, [visible]);
+  }, [visible, query]);
 
   // Ensure focused item is visible in list
   useEffect(() => {
@@ -100,22 +88,17 @@ export function CommandPalette({
         item.action();
         return;
       }
-      if (item.segmentId && onScrollToSegment) {
-        onScrollToSegment(item.segmentId);
-        onClose();
-        return;
-      }
       // Default for section items: scroll to section
       if (item.section) {
         onScrollToSection(item.section.beforeSequenceId);
         onClose();
       }
     },
-    [onScrollToSection, onScrollToSegment, onClose]
+    [onScrollToSection, onClose]
   );
 
   const handleKeyDown = useCallback(
-    (e: ReactKeyboardEvent<HTMLInputElement>) => {
+    (e: KeyboardEvent) => {
       if (items.length === 0) {
         if (e.key === "Escape") {
           e.preventDefault();
@@ -163,6 +146,13 @@ export function CommandPalette({
   );
 
   useEffect(() => {
+    if (!visible) return;
+    const onKeyDown = (e: KeyboardEvent) => handleKeyDown(e);
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [visible, handleKeyDown]);
+
+  useEffect(() => {
     if (items.length === 0 && focusIndex !== 0) {
       setFocusIndex(0);
       return;
@@ -172,130 +162,33 @@ export function CommandPalette({
     }
   }, [items.length, focusIndex]);
 
-  // Preview panel content (only in sections mode)
-  const previewContent = useMemo(() => {
-    if (mode !== "sections") return null;
-    const item = items[focusIndex];
-    if (!item?.section) return null;
-    return buildSectionPreview(item.section, sections, segments);
-  }, [mode, items, focusIndex, sections, segments]);
-
   if (!visible) return null;
 
   return (
-    <div className="command-palette-overlay" onClick={onClose}>
-      <div
-        className="command-palette"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Search input */}
-        <div className="command-palette-input-row">
-          <span className="command-palette-icon" aria-hidden="true">
-            {mode === "sections" && "§"}
-            {mode === "history" && "#"}
-            {mode === "settings" && ">"}
-          </span>
-          <input
-            ref={inputRef}
-            className="command-palette-input"
-            type="text"
-            value={query}
-            onChange={(e) => handleQueryChange(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder={
-              mode === "sections"
-                ? "セクションを検索…"
-                : mode === "history"
-                ? "会議履歴を検索…"
-                : "設定コマンド…"
-            }
-            aria-label="Command palette input"
-            autoComplete="off"
-            spellCheck={false}
-          />
-          <span className="command-palette-mode-hint">
-            {mode === "sections" && "Sections"}
-            {mode === "history" && "History"}
-            {mode === "settings" && "Settings"}
-          </span>
-        </div>
-
-        {/* Body: list + preview */}
-        <div className="command-palette-body">
-          {/* Item list */}
-          <div className="command-palette-list" ref={listRef}>
-            {items.length === 0 ? (
-              <div className="command-palette-empty">
-                {mode === "sections" && "セクションがありません"}
-                {mode === "history" && "履歴がありません"}
-                {mode === "settings" && "一致するコマンドがありません"}
-              </div>
-            ) : (
-              items.map((item, idx) => (
-                <div
-                  key={item.id}
-                  className={`command-palette-item${idx === focusIndex ? " is-focused" : ""}`}
-                  data-focused={idx === focusIndex}
-                  onClick={() => executeItem(item)}
-                  onMouseEnter={() => setFocusIndex(idx)}
-                >
-                  <span className="command-palette-item-label">{item.label}</span>
-                  {item.description && (
-                    <span className="command-palette-item-desc">{item.description}</span>
-                  )}
-                </div>
-              ))
-            )}
+    <div className="command-palette command-palette-attached">
+      <div className="command-palette-list" ref={listRef}>
+        {items.length === 0 ? (
+          <div className="command-palette-empty">
+            {mode === "sections" && "セクションがありません"}
+            {mode === "history" && "履歴がありません"}
+            {mode === "settings" && "一致するコマンドがありません"}
           </div>
-
-          {/* Preview panel (only in sections mode) */}
-          {mode === "sections" && previewContent && (
-            <div className="command-palette-preview">
-              <div className="command-palette-preview-title">
-                {previewContent.title}
-              </div>
-              {previewContent.highlights.length > 0 && (
-                <div className="command-palette-preview-section">
-                  <span className="preview-label">Highlights</span>
-                  {previewContent.highlights.map((h) => (
-                    <div key={h.id} className="preview-highlight-item">
-                      <span
-                        className="preview-highlight-dot"
-                        data-color={h.color}
-                      />
-                      {h.note || h.text || "—"}
-                    </div>
-                  ))}
-                </div>
-              )}
-              {previewContent.comments.length > 0 && (
-                <div className="command-palette-preview-section">
-                  <span className="preview-label">Comments</span>
-                  {previewContent.comments.map((c) => (
-                    <div key={c.id} className="preview-comment-item">
-                      <span className="preview-comment-author">{c.author || "Anonymous"}</span>
-                      <span className="preview-comment-text">{c.text}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-              {previewContent.highlights.length === 0 && previewContent.comments.length === 0 && (
-                <div className="command-palette-preview-empty">
-                  このセクションにはハイライト・コメントがありません
-                </div>
+        ) : (
+          items.map((item, idx) => (
+            <div
+              key={item.id}
+              className={`command-palette-item${idx === focusIndex ? " is-focused" : ""}`}
+              data-focused={idx === focusIndex}
+              onClick={() => executeItem(item)}
+              onMouseEnter={() => setFocusIndex(idx)}
+            >
+              <span className="command-palette-item-label">{item.label}</span>
+              {item.description && (
+                <span className="command-palette-item-desc">{item.description}</span>
               )}
             </div>
-          )}
-        </div>
-
-        {/* Footer hints */}
-        <div className="command-palette-footer">
-          <span>↑↓ / Ctrl+N/P: 移動</span>
-          <span>Enter: 選択</span>
-          <span>#: 履歴</span>
-          <span>&gt;: 設定</span>
-          <span>Esc: 閉じる</span>
-        </div>
+          ))
+        )}
       </div>
     </div>
   );
@@ -307,23 +200,8 @@ export function CommandPalette({
 
 function buildSectionItems(
   sections: Section[],
-  segments: TranscriptSegmentView[],
   search: string
 ): PaletteItem[] {
-  if (sections.length === 0) {
-    return segments
-      .filter((seg) => {
-        if (!search) return true;
-        return seg.displayText.toLowerCase().includes(search);
-      })
-      .map((seg, idx) => ({
-        id: `segment-${seg.id}`,
-        label: `${idx + 1}. ${seg.displayText}`,
-        description: seg.timestamp || undefined,
-        segmentId: seg.id,
-      }));
-  }
-
   const sorted = [...sections].sort((a, b) => a.beforeSequenceId - b.beforeSequenceId);
 
   return sorted
@@ -402,53 +280,3 @@ function buildSettingsItems(
 // ----------------------------------------------------------------
 // Preview builder
 // ----------------------------------------------------------------
-
-interface PreviewData {
-  title: string;
-  highlights: { id: string; color: string; note: string | null; text: string | null }[];
-  comments: { id: string; author: string | null; text: string }[];
-}
-
-function buildSectionPreview(
-  section: Section,
-  allSections: Section[],
-  segments: TranscriptSegmentView[]
-): PreviewData {
-  const sorted = [...allSections].sort((a, b) => a.beforeSequenceId - b.beforeSequenceId);
-  const idx = sorted.findIndex((s) => s.id === section.id);
-  const nextSection = sorted[idx + 1];
-
-  // Get segments belonging to this section
-  const sectionSegments = segments.filter((seg) => {
-    if (seg.sequenceId < section.beforeSequenceId) return false;
-    if (nextSection && seg.sequenceId >= nextSection.beforeSequenceId) return false;
-    return true;
-  });
-
-  const highlights: PreviewData["highlights"] = [];
-  const comments: PreviewData["comments"] = [];
-
-  for (const seg of sectionSegments) {
-    for (const h of seg.highlights) {
-      highlights.push({
-        id: h.id,
-        color: h.color,
-        note: h.note,
-        text: seg.displayText.slice(0, 40),
-      });
-    }
-    for (const c of seg.comments) {
-      comments.push({
-        id: c.id,
-        author: c.author_name,
-        text: c.comment_text,
-      });
-    }
-  }
-
-  return {
-    title: section.title,
-    highlights,
-    comments,
-  };
-}

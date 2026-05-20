@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { RefObject } from "react";
 import { createWebSocketClient } from "./api/ws";
 import type { WebSocketClient } from "./api/ws";
 import { apiClient } from "./api/client";
@@ -111,6 +112,8 @@ function App() {
 
   const wsRef = useRef<WebSocketClient | null>(null);
   const viewerRef = useRef<TranscriptViewerHandle>(null);
+  const commandShellRef = useRef<HTMLDivElement>(null);
+  const commandInputRef = useRef<HTMLInputElement>(null);
 
   const {
     setConnectionStatus,
@@ -260,6 +263,7 @@ function App() {
   // ---- Command bar visibility (⌘P or top-center hover) ----
   const [cmdBarHintVisible, setCmdBarHintVisible] = useState(false);
   const [isPaletteOpen, setIsPaletteOpen] = useState(false);
+  const [commandQuery, setCommandQuery] = useState("");
   const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const showBar = useCallback(() => {
@@ -283,17 +287,22 @@ function App() {
           target.tagName === "TEXTAREA" ||
           target.isContentEditable);
 
-      if ((e.metaKey || e.ctrlKey) && e.key === "p") {
+      if (e.metaKey && !e.ctrlKey && e.key === "p") {
         e.preventDefault();
         if (hideTimerRef.current) {
           clearTimeout(hideTimerRef.current);
           hideTimerRef.current = null;
         }
         setCmdBarHintVisible(true);
-        setIsPaletteOpen((v) => !v);
+        setIsPaletteOpen(true);
+        requestAnimationFrame(() => {
+          commandInputRef.current?.focus();
+          commandInputRef.current?.select();
+        });
       }
       if (e.key === "Escape") {
         setIsPaletteOpen(false);
+        setCommandQuery("");
       }
       // Shift+↑: Jump to previous section
       if (!isTypingTarget && e.shiftKey && e.key === "ArrowUp" && !e.metaKey && !e.ctrlKey && !e.altKey) {
@@ -310,6 +319,18 @@ function App() {
     return () => document.removeEventListener("keydown", handler);
   }, []);
 
+  useEffect(() => {
+    if (!isPaletteOpen) return;
+    const handleOutsideClick = (e: MouseEvent) => {
+      const target = e.target as Node | null;
+      if (!target) return;
+      if (commandShellRef.current?.contains(target)) return;
+      setIsPaletteOpen(false);
+    };
+    document.addEventListener("mousedown", handleOutsideClick);
+    return () => document.removeEventListener("mousedown", handleOutsideClick);
+  }, [isPaletteOpen]);
+
   const handleChangeTheme = useCallback((newTheme: "dark" | "light") => {
     setTheme(newTheme);
     applyTheme(newTheme);
@@ -323,21 +344,10 @@ function App() {
       {/* Invisible hover trigger at top-center */}
       <div
         className="cmd-hotzone"
+        style={{ pointerEvents: cmdBarHintVisible || isPaletteOpen ? "none" : "auto" }}
         onMouseEnter={showBar}
         onMouseLeave={scheduleHide}
       />
-
-      {/* Command Palette (full-featured overlay) */}
-      {isPaletteOpen && (
-        <CommandPalette
-          visible={isPaletteOpen}
-          onClose={() => setIsPaletteOpen(false)}
-          onScrollToSection={(beforeSeqId) => viewerRef.current?.scrollToSection(beforeSeqId)}
-          onScrollToSegment={(segId) => viewerRef.current?.scrollToSegment(segId)}
-          onChangeTheme={handleChangeTheme}
-          currentTheme={theme}
-        />
-      )}
 
       <div className="app-frame">
         <header className="app-header">
@@ -355,15 +365,37 @@ function App() {
           </div>
 
           {title && <h1 className="meeting-title">{title}</h1>}
-          <CommandBarTrigger
-            visible={cmdBarHintVisible || isPaletteOpen}
-            onMouseEnter={showBar}
-            onMouseLeave={scheduleHide}
-            onClick={() => {
-              setCmdBarHintVisible(true);
-              setIsPaletteOpen(true);
-            }}
-          />
+          <div className="command-shell" ref={commandShellRef}>
+            <CommandBarTrigger
+              visible={cmdBarHintVisible || isPaletteOpen}
+              onMouseEnter={showBar}
+              onMouseLeave={scheduleHide}
+              query={commandQuery}
+              onQueryChange={(value) => {
+                setCommandQuery(value);
+                if (!isPaletteOpen) setIsPaletteOpen(true);
+              }}
+              onFocusInput={() => {
+                setCmdBarHintVisible(true);
+                setIsPaletteOpen(true);
+                requestAnimationFrame(() => commandInputRef.current?.focus());
+              }}
+              inputRef={commandInputRef}
+            />
+            {isPaletteOpen && (
+              <CommandPalette
+                visible={isPaletteOpen}
+                query={commandQuery}
+                onClose={() => {
+                  setIsPaletteOpen(false);
+                  setCommandQuery("");
+                }}
+                onScrollToSection={(beforeSeqId) => viewerRef.current?.scrollToSection(beforeSeqId)}
+                onChangeTheme={handleChangeTheme}
+                currentTheme={theme}
+              />
+            )}
+          </div>
           <ConnectionBadge />
         </header>
 
@@ -381,12 +413,18 @@ function CommandBarTrigger({
   visible,
   onMouseEnter,
   onMouseLeave,
-  onClick,
+  query,
+  onQueryChange,
+  onFocusInput,
+  inputRef,
 }: {
   visible: boolean;
   onMouseEnter: () => void;
   onMouseLeave: () => void;
-  onClick: () => void;
+  query: string;
+  onQueryChange: (value: string) => void;
+  onFocusInput: () => void;
+  inputRef: RefObject<HTMLInputElement | null>;
 }) {
   return (
     <div
@@ -394,18 +432,25 @@ function CommandBarTrigger({
       aria-label="Command entry"
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
-      onClick={onClick}
-      role="button"
-      tabIndex={0}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          onClick();
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) {
+          onFocusInput();
         }
       }}
     >
       <span className="command-search" aria-hidden="true" />
-      <span className="command-placeholder">セクション検索 / コマンドを入力</span>
+      <input
+        ref={inputRef}
+        type="text"
+        className="command-input"
+        value={query}
+        onChange={(e) => onQueryChange(e.target.value)}
+        onFocus={onFocusInput}
+        autoComplete="off"
+        spellCheck={false}
+        placeholder="セクション検索 / コマンドを入力"
+        aria-label="コマンド入力"
+      />
       <span className="command-kbd">⌘ P</span>
     </div>
   );
