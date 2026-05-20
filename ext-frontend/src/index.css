@@ -2623,6 +2623,17 @@ button:disabled { cursor: default; }
   text-overflow: ellipsis;
 }
 
+.command-palette-load-more {
+  text-align: center;
+  color: var(--accent);
+  border-left-color: transparent;
+}
+
+.command-palette-load-more:hover {
+  border-left-color: transparent;
+  background: var(--accent-dim);
+}
+
 /* Preview panel */
 .command-palette-preview {
   width: 240px;

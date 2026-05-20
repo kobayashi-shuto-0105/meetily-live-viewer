@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranscriptStore } from "../stores/transcriptStore";
-import type { Section } from "../types";
+import { apiClient } from "../api/client";
+import type { Section, SessionHistoryItem } from "../types";
 
 // ----------------------------------------------------------------
 // Types
@@ -26,6 +27,7 @@ interface CommandPaletteProps {
   query: string;
   onClose: () => void;
   onScrollToSection: (beforeSequenceId: number) => void;
+  onLoadSession: (sessionId: string, meetingTitle: string | null, startedAt: string) => void;
   onChangeTheme: (theme: "dark" | "light") => void;
   currentTheme: "dark" | "light";
 }
@@ -35,11 +37,64 @@ export function CommandPalette({
   query,
   onClose,
   onScrollToSection,
+  onLoadSession,
   onChangeTheme,
   currentTheme,
 }: CommandPaletteProps) {
   const [focusIndex, setFocusIndex] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
+
+  const sections = useTranscriptStore((s) => s.sections);
+
+  // --- History state ---
+  const [historyItems, setHistoryItems] = useState<SessionHistoryItem[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyOffset, setHistoryOffset] = useState(0);
+  const [historyHasMore, setHistoryHasMore] = useState(true);
+  const historyFetchedRef = useRef(false);
+
+  // Fetch history when entering history mode
+  useEffect(() => {
+    if (query.startsWith("#") && !historyFetchedRef.current) {
+      historyFetchedRef.current = true;
+      setHistoryLoading(true);
+      apiClient
+        .getSessionHistory(15, 0)
+        .then((res) => {
+          setHistoryItems(res.sessions);
+          setHistoryOffset(res.sessions.length);
+          setHistoryHasMore(res.sessions.length >= 15);
+        })
+        .catch((e) => {
+          console.warn("[CommandPalette] Failed to fetch session history:", e);
+        })
+        .finally(() => setHistoryLoading(false));
+    }
+    // Reset when leaving history mode
+    if (!query.startsWith("#")) {
+      historyFetchedRef.current = false;
+      setHistoryItems([]);
+      setHistoryOffset(0);
+      setHistoryHasMore(true);
+    }
+  }, [query]);
+
+  // Load more history items
+  const loadMoreHistory = useCallback(() => {
+    if (historyLoading || !historyHasMore) return;
+    setHistoryLoading(true);
+    apiClient
+      .getSessionHistory(15, historyOffset)
+      .then((res) => {
+        setHistoryItems((prev) => [...prev, ...res.sessions]);
+        setHistoryOffset((prev) => prev + res.sessions.length);
+        setHistoryHasMore(res.sessions.length >= 15);
+      })
+      .catch((e) => {
+        console.warn("[CommandPalette] Failed to fetch more history:", e);
+      })
+      .finally(() => setHistoryLoading(false));
+  }, [historyLoading, historyHasMore, historyOffset]);
 
   const sections = useTranscriptStore((s) => s.sections);
 
@@ -60,11 +115,11 @@ export function CommandPalette({
       return buildSectionItems(sections, searchText);
     }
     if (mode === "history") {
-      return buildHistoryItems(searchText);
+      return buildHistoryItemsFromData(historyItems, searchText, onLoadSession, onClose);
     }
     // settings
     return buildSettingsItems(searchText, currentTheme, onChangeTheme, onClose);
-  }, [mode, query, sections, currentTheme, onChangeTheme, onClose]);
+  }, [mode, query, sections, historyItems, onLoadSession, onClose, currentTheme, onChangeTheme]);
 
   // Reset focus when opened or query changes
   useEffect(() => {
@@ -170,24 +225,36 @@ export function CommandPalette({
         {items.length === 0 ? (
           <div className="command-palette-empty">
             {mode === "sections" && "セクションがありません"}
-            {mode === "history" && "履歴がありません"}
+            {mode === "history" && (historyLoading ? "読み込み中…" : "履歴がありません")}
             {mode === "settings" && "一致するコマンドがありません"}
           </div>
         ) : (
-          items.map((item, idx) => (
-            <div
-              key={item.id}
-              className={`command-palette-item${idx === focusIndex ? " is-focused" : ""}`}
-              data-focused={idx === focusIndex}
-              onClick={() => executeItem(item)}
-              onMouseEnter={() => setFocusIndex(idx)}
-            >
-              <span className="command-palette-item-label">{item.label}</span>
-              {item.description && (
-                <span className="command-palette-item-desc">{item.description}</span>
-              )}
-            </div>
-          ))
+          <>
+            {items.map((item, idx) => (
+              <div
+                key={item.id}
+                className={`command-palette-item${idx === focusIndex ? " is-focused" : ""}`}
+                data-focused={idx === focusIndex}
+                onClick={() => executeItem(item)}
+                onMouseEnter={() => setFocusIndex(idx)}
+              >
+                <span className="command-palette-item-label">{item.label}</span>
+                {item.description && (
+                  <span className="command-palette-item-desc">{item.description}</span>
+                )}
+              </div>
+            ))}
+            {mode === "history" && historyHasMore && (
+              <div
+                className="command-palette-item command-palette-load-more"
+                onClick={loadMoreHistory}
+              >
+                <span className="command-palette-item-label">
+                  {historyLoading ? "読み込み中…" : "↓ さらに表示する"}
+                </span>
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>
@@ -220,16 +287,46 @@ function buildSectionItems(
     }));
 }
 
-function buildHistoryItems(search: string): PaletteItem[] {
-  // Meeting history is not available via REST API in this frontend currently.
-  // Show placeholder items.
-  const placeholder: PaletteItem[] = [
-    { id: "history-placeholder", label: "会議履歴の取得は現在未対応です（Coming Soon）", description: "API対応後に有効化されます" },
-  ];
-  if (search) {
-    return placeholder.filter((p) => p.label.includes(search));
+function buildHistoryItemsFromData(
+  sessions: SessionHistoryItem[],
+  search: string,
+  onLoadSession: (sessionId: string, meetingTitle: string | null, startedAt: string) => void,
+  onClose: () => void
+): PaletteItem[] {
+  const filtered = sessions.filter((s) => {
+    if (!search) return true;
+    const title = (s.meeting_title ?? "").toLowerCase();
+    const date = s.started_at.toLowerCase();
+    return title.includes(search) || date.includes(search);
+  });
+
+  return filtered.map((s) => {
+    const title = s.meeting_title || "無題の会議";
+    const date = formatSessionDate(s.started_at);
+    return {
+      id: s.session_id,
+      label: title,
+      description: date,
+      action: () => {
+        onLoadSession(s.session_id, s.meeting_title, s.started_at);
+        onClose();
+      },
+    };
+  });
+}
+
+/** 日時文字列を表示用にフォーマットする */
+function formatSessionDate(isoString: string): string {
+  try {
+    const d = new Date(isoString);
+    const month = d.getMonth() + 1;
+    const day = d.getDate();
+    const hours = d.getHours().toString().padStart(2, "0");
+    const minutes = d.getMinutes().toString().padStart(2, "0");
+    return `${month}/${day} ${hours}:${minutes}`;
+  } catch {
+    return isoString;
   }
-  return placeholder;
 }
 
 function buildSettingsItems(

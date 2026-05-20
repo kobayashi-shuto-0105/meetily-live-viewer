@@ -336,6 +336,35 @@ function App() {
     applyTheme(newTheme);
   }, []);
 
+  // Load a past session from history into the viewer
+  const handleLoadSession = useCallback(
+    async (sessionId: string, meetingTitle: string | null, startedAt: string) => {
+      try {
+        restoreSession(sessionId, meetingTitle, startedAt);
+        const segments = await apiClient.getSessionTranscripts(sessionId);
+        loadSegments(segments);
+
+        try {
+          const sections = await apiClient.getSessionSections(sessionId);
+          loadSections(
+            sections.map((s) => ({
+              id: s.id,
+              title: s.title,
+              description: s.description,
+              beforeSequenceId: s.before_sequence_id,
+              createdAt: s.created_at,
+            }))
+          );
+        } catch (e) {
+          console.warn("[handleLoadSession] Failed to load sections:", e);
+        }
+      } catch (e) {
+        console.warn("[handleLoadSession] Failed to load session:", e);
+      }
+    },
+    [restoreSession, loadSegments, loadSections]
+  );
+
   return (
     <div className="meetily-app">
       {showOnboarding && (
@@ -391,6 +420,7 @@ function App() {
                   setCommandQuery("");
                 }}
                 onScrollToSection={(beforeSeqId) => viewerRef.current?.scrollToSection(beforeSeqId)}
+                onLoadSession={handleLoadSession}
                 onChangeTheme={handleChangeTheme}
                 currentTheme={theme}
               />

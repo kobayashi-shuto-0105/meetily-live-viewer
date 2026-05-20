@@ -155,6 +155,8 @@ fn build_router(state: ServerState) -> Router {
         .route("/ws", get(ws_handler))
         // 現在の録音セッション情報を取得する
         .route("/api/sessions/current", get(get_current_session))
+        // セッション履歴を取得する（新しい順、ページネーション対応）
+        .route("/api/sessions/history", get(get_session_history))
         // セッション内の全セグメントを取得する（リアルタイム中 or 録音後）
         .route(
             "/api/sessions/{session_id}/transcripts",
@@ -416,6 +418,66 @@ async fn get_current_session(State(state): State<ServerState>) -> impl IntoRespo
         None => {
             // 録音中でない場合は null を返す
             (StatusCode::OK, axum::Json(serde_json::Value::Null)).into_response()
+        }
+    }
+}
+
+// =============================================================================
+// セッション履歴取得
+// =============================================================================
+
+/// セッション履歴を新しい順で返す。
+/// クエリパラメータ `limit`（デフォルト 15）と `offset`（デフォルト 0）でページネーションを制御する。
+async fn get_session_history(
+    State(state): State<ServerState>,
+    Query(params): Query<HashMap<String, String>>,
+) -> impl IntoResponse {
+    let limit = params
+        .get("limit")
+        .and_then(|s| s.parse::<i64>().ok())
+        .unwrap_or(15)
+        .min(100);
+    let offset = params
+        .get("offset")
+        .and_then(|s| s.parse::<i64>().ok())
+        .unwrap_or(0)
+        .max(0);
+
+    match ExternalWebRepository::get_session_history(&state.pool, limit, offset).await {
+        Ok(sessions) => {
+            let items: Vec<serde_json::Value> = sessions
+                .iter()
+                .map(|s| {
+                    serde_json::json!({
+                        "session_id": s.id,
+                        "meeting_id": s.meeting_id,
+                        "meeting_title": s.meeting_title,
+                        "started_at": s.started_at,
+                        "stopped_at": s.stopped_at,
+                        "finalized_at": s.finalized_at,
+                    })
+                })
+                .collect();
+
+            (
+                StatusCode::OK,
+                axum::Json(serde_json::json!({
+                    "sessions": items,
+                    "limit": limit,
+                    "offset": offset,
+                })),
+            )
+                .into_response()
+        }
+        Err(e) => {
+            log::error!("Failed to get session history: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                axum::Json(serde_json::json!({
+                    "error": "Failed to get session history"
+                })),
+            )
+                .into_response()
         }
     }
 }

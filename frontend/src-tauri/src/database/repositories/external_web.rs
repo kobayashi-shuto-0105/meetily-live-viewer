@@ -171,6 +171,29 @@ impl ExternalWebRepository {
         Ok(session)
     }
 
+    /// 過去のセッション一覧を取得する（新しい順）。
+    /// `limit` で最大件数を制御し、`offset` でページネーションを行う。
+    /// 現在アクティブなセッション（stopped_at IS NULL）は除外する。
+    pub async fn get_session_history(
+        pool: &SqlitePool,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<ExternalRecordingSession>, SqlxError> {
+        let sessions = sqlx::query_as::<_, ExternalRecordingSession>(
+            "SELECT id, meeting_id, meeting_title, started_at, stopped_at, finalized_at, created_at, updated_at
+             FROM external_recording_sessions
+             WHERE stopped_at IS NOT NULL
+             ORDER BY started_at DESC
+             LIMIT ? OFFSET ?",
+        )
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(pool)
+        .await?;
+
+        Ok(sessions)
+    }
+
     // =========================================================================
     // セグメント操作
     // =========================================================================

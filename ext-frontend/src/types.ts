@@ -349,6 +349,27 @@ export interface SectionResponse {
 }
 
 // =============================================================================
+// セッション履歴
+// =============================================================================
+
+/** GET /api/sessions/history のレスポンス内セッション */
+export interface SessionHistoryItem {
+  session_id: string;
+  meeting_id: string | null;
+  meeting_title: string | null;
+  started_at: string;
+  stopped_at: string | null;
+  finalized_at: string | null;
+}
+
+/** GET /api/sessions/history のレスポンス */
+export interface SessionHistoryResponse {
+  sessions: SessionHistoryItem[];
+  limit: number;
+  offset: number;
+}
+
+// =============================================================================
 // 接続状態
 // =============================================================================
 
