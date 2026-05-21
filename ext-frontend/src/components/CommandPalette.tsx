@@ -380,7 +380,7 @@ function buildHistoryItemsFromData(
   });
 }
 
-/** 日時文字列を表示用にフォーマットする */
+/** Format an ISO date string for display in the palette */
 function formatSessionDate(isoString: string): string {
   try {
     const d = new Date(isoString);
