@@ -1967,6 +1967,118 @@ button:disabled { cursor: default; }
   opacity: 0.85;
 }
 
+/* Light mode readability tuning: keep glass surfaces, increase text contrast. */
+[data-theme="light"] .meeting-title {
+  color: rgba(22 34 58 / 0.90);
+  text-shadow: 0 1px 0 rgba(255 255 255 / 0.62);
+}
+
+[data-theme="light"] .command-search {
+  border-color: rgba(57 84 136 / 0.58);
+}
+
+[data-theme="light"] .command-search::after {
+  background: rgba(57 84 136 / 0.58);
+}
+
+[data-theme="light"] .command-placeholder {
+  color: rgba(48 68 106 / 0.78);
+}
+
+[data-theme="light"] .command-input {
+  color: rgba(21 34 60 / 0.94);
+}
+
+[data-theme="light"] .command-input::placeholder {
+  color: rgba(57 84 136 / 0.52);
+}
+
+[data-theme="light"] .command-kbd {
+  border-color: rgba(65 92 150 / 0.30);
+  background: rgba(233 240 255 / 0.85);
+  color: rgba(44 66 106 / 0.84);
+}
+
+[data-theme="light"] .command-help {
+  color: rgba(54 75 114 / 0.72);
+}
+
+[data-theme="light"] .command-help span {
+  color: rgba(54 75 114 / 0.48);
+}
+
+[data-theme="light"] .segment-text {
+  color: rgba(20 33 58 / 0.93);
+  text-shadow: none;
+}
+
+[data-theme="light"] .segment-text.is-partial {
+  color: rgba(54 76 116 / 0.76);
+}
+
+[data-theme="light"] .segment-meta {
+  color: rgba(54 76 116 / 0.80);
+}
+
+[data-theme="light"] .segment-badge-todo {
+  color: #a65800;
+  background: rgba(217 119 6 / 0.17);
+  border-color: rgba(190 102 8 / 0.40);
+}
+
+[data-theme="light"] .segment-badge-fixme {
+  color: #b72020;
+  background: rgba(220 38 38 / 0.14);
+  border-color: rgba(190 32 32 / 0.38);
+}
+
+[data-theme="light"] .segment-shortcuts {
+  border-color: rgba(65 92 150 / 0.26);
+  background: rgba(236 243 255 / 0.84);
+  color: rgba(49 70 109 / 0.82);
+}
+
+[data-theme="light"] .shortcut-hint kbd {
+  border-color: rgba(65 92 150 / 0.24);
+  background: rgba(255 255 255 / 0.86);
+  color: rgba(44 66 106 / 0.84);
+}
+
+[data-theme="light"] .segment-sidecar::before {
+  border-top-color: rgba(94 130 220 / 0.40);
+}
+
+[data-theme="light"] .comment-card-title {
+  color: rgba(48 68 106 / 0.76);
+}
+
+[data-theme="light"] .comment-item {
+  color: rgba(24 36 61 / 0.90);
+}
+
+[data-theme="light"] .comment-avatar {
+  background:
+    linear-gradient(135deg, rgba(255 255 255 / 0.92), rgba(189 212 246 / 0.86)),
+    rgba(255 255 255 / 0.78);
+  color: rgba(24 36 60 / 0.88);
+}
+
+[data-theme="light"] .comment-author {
+  color: rgba(32 51 84 / 0.82);
+}
+
+[data-theme="light"] .comment-menu {
+  color: rgba(70 92 136 / 0.58);
+}
+
+[data-theme="light"] .comment-body {
+  color: rgba(24 36 61 / 0.90);
+}
+
+[data-theme="light"] .comment-time {
+  color: rgba(63 84 126 / 0.64);
+}
+
 /* Submit button — keep the gradient pop, add a soft halo. */
 .command-submit {
   box-shadow:
@@ -2703,7 +2815,12 @@ button:disabled { cursor: default; }
   display: flex;
   flex-direction: column;
   gap: 2px;
+  width: 100%;
   padding: 8px 16px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  font: inherit;
   cursor: pointer;
   border-left: 3px solid transparent;
   transition: background 100ms ease;
@@ -2711,6 +2828,12 @@ button:disabled { cursor: default; }
 
 .command-palette-item:hover,
 .command-palette-item.is-focused {
+  background: var(--bg-hover);
+  border-left-color: var(--accent);
+}
+
+.command-palette-item:focus-visible {
+  outline: none;
   background: var(--bg-hover);
   border-left-color: var(--accent);
 }
@@ -2732,6 +2855,7 @@ button:disabled { cursor: default; }
 }
 
 .command-palette-load-more {
+  align-items: center;
   text-align: center;
   color: var(--accent);
   border-left-color: transparent;

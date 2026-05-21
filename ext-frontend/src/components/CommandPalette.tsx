@@ -130,12 +130,10 @@ export function CommandPalette({
     return buildSettingsItems(searchText, currentTheme, onChangeTheme, onClose);
   }, [mode, query, sections, sortedSegments, historyItems, onLoadSession, onScrollToSegment, onClose, currentTheme, onChangeTheme]);
 
-  // Reset focus when opened or query changes
-  useEffect(() => {
-    if (visible) {
-      setFocusIndex(0);
-    }
-  }, [visible, query]);
+  const currentFocusIndex = useMemo(() => {
+    if (items.length === 0) return 0;
+    return Math.min(focusIndex, items.length - 1);
+  }, [focusIndex, items.length]);
 
   // Ensure focused item is visible in list
   useEffect(() => {
@@ -144,7 +142,7 @@ export function CommandPalette({
     if (focused) {
       focused.scrollIntoView({ block: "nearest" });
     }
-  }, [focusIndex]);
+  }, [currentFocusIndex]);
 
   const executeItem = useCallback(
     (item: PaletteItem) => {
@@ -195,7 +193,7 @@ export function CommandPalette({
       // Enter → execute focused item
       if (e.key === "Enter") {
         e.preventDefault();
-        const item = items[focusIndex];
+        const item = items[currentFocusIndex];
         if (item) executeItem(item);
         return;
       }
@@ -206,7 +204,7 @@ export function CommandPalette({
         return;
       }
     },
-    [items, focusIndex, executeItem, onClose]
+    [items, currentFocusIndex, executeItem, onClose]
   );
 
   useEffect(() => {
@@ -216,21 +214,16 @@ export function CommandPalette({
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [visible, handleKeyDown]);
 
-  useEffect(() => {
-    if (items.length === 0 && focusIndex !== 0) {
-      setFocusIndex(0);
-      return;
-    }
-    if (items.length > 0 && focusIndex > items.length - 1) {
-      setFocusIndex(items.length - 1);
-    }
-  }, [items.length, focusIndex]);
-
   if (!visible) return null;
 
   return (
-    <div className="command-palette command-palette-attached">
-      <div className="command-palette-list" ref={listRef}>
+    <div
+      className="command-palette command-palette-attached"
+      role="dialog"
+      aria-modal="true"
+      aria-label="コマンドパレット"
+    >
+      <div className="command-palette-list" ref={listRef} role="listbox" aria-label="コマンド候補一覧">
         {items.length === 0 ? (
           <div className="command-palette-empty">
             {mode === "sections" && "No sections found"}
@@ -240,28 +233,33 @@ export function CommandPalette({
         ) : (
           <>
             {items.map((item, idx) => (
-              <div
+              <button
                 key={item.id}
-                className={`command-palette-item${idx === focusIndex ? " is-focused" : ""}`}
-                data-focused={idx === focusIndex}
+                type="button"
+                className={`command-palette-item${idx === currentFocusIndex ? " is-focused" : ""}`}
+                data-focused={idx === currentFocusIndex}
+                role="option"
+                aria-selected={idx === currentFocusIndex}
                 onClick={() => executeItem(item)}
                 onMouseEnter={() => setFocusIndex(idx)}
+                onFocus={() => setFocusIndex(idx)}
               >
                 <span className="command-palette-item-label">{item.label}</span>
                 {item.description && (
                   <span className="command-palette-item-desc">{item.description}</span>
                 )}
-              </div>
+              </button>
             ))}
             {mode === "history" && historyHasMore && (
-              <div
+              <button
+                type="button"
                 className="command-palette-item command-palette-load-more"
                 onClick={loadMoreHistory}
               >
                 <span className="command-palette-item-label">
                   {historyLoading ? "Loading…" : "↓ Load more"}
                 </span>
-              </div>
+              </button>
             )}
           </>
         )}

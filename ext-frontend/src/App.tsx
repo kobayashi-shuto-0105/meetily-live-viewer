@@ -288,7 +288,7 @@ function App() {
           target.tagName === "TEXTAREA" ||
           target.isContentEditable);
 
-      if (e.metaKey && !e.ctrlKey && e.key === "p") {
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === "p") {
         e.preventDefault();
         if (hideTimerRef.current) {
           clearTimeout(hideTimerRef.current);
@@ -334,7 +334,6 @@ function App() {
 
   const handleChangeTheme = useCallback((newTheme: "dark" | "light") => {
     setTheme(newTheme);
-    applyTheme(newTheme);
   }, []);
 
   // Load a past session from history into the viewer

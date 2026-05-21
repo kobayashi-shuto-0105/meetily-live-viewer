@@ -436,7 +436,7 @@ async fn get_session_history(
         .get("limit")
         .and_then(|s| s.parse::<i64>().ok())
         .unwrap_or(15)
-        .min(100);
+        .clamp(0, 100);
     let offset = params
         .get("offset")
         .and_then(|s| s.parse::<i64>().ok())

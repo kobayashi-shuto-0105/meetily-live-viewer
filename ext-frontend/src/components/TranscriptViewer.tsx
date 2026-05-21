@@ -90,8 +90,18 @@ export const TranscriptViewer = forwardRef<TranscriptViewerHandle>(
     if (segEl) {
       segEl.scrollIntoView({ behavior: "smooth", block: "start" });
       setFollowMode(false);
+      return;
     }
-  }, []);
+
+    // Fallback for trailing sections placed after the final segment.
+    const fallbackSection = sortedSections.find((sec) => sec.beforeSequenceId === seqId);
+    if (!fallbackSection) return;
+    const sectionEl = el.querySelector(`[data-section-id="${fallbackSection.id}"]`);
+    if (sectionEl) {
+      sectionEl.scrollIntoView({ behavior: "smooth", block: "start" });
+      setFollowMode(false);
+    }
+  }, [sortedSections]);
 
   const scrollToSegmentById = useCallback((segmentId: string) => {
     const el = scrollRef.current;

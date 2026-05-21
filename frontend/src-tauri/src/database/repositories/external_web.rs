@@ -179,6 +179,8 @@ impl ExternalWebRepository {
         limit: i64,
         offset: i64,
     ) -> Result<Vec<ExternalRecordingSession>, SqlxError> {
+        let safe_limit = limit.clamp(0, 100);
+        let safe_offset = offset.max(0);
         let sessions = sqlx::query_as::<_, ExternalRecordingSession>(
             "SELECT id, meeting_id, meeting_title, started_at, stopped_at, finalized_at, created_at, updated_at
              FROM external_recording_sessions
@@ -186,8 +188,8 @@ impl ExternalWebRepository {
              ORDER BY started_at DESC
              LIMIT ? OFFSET ?",
         )
-        .bind(limit)
-        .bind(offset)
+        .bind(safe_limit)
+        .bind(safe_offset)
         .fetch_all(pool)
         .await?;
 
