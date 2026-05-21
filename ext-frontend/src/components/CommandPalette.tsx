@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranscriptStore } from "../stores/transcriptStore";
 import { apiClient } from "../api/client";
-import type { Section, SessionHistoryItem } from "../types";
+import type { Section, SessionHistoryItem, TranscriptSegmentView } from "../types";
 
 // ----------------------------------------------------------------
 // Types
@@ -27,6 +27,7 @@ interface CommandPaletteProps {
   query: string;
   onClose: () => void;
   onScrollToSection: (beforeSequenceId: number) => void;
+  onScrollToSegment: (segmentId: string) => void;
   onLoadSession: (sessionId: string, meetingTitle: string | null, startedAt: string) => void;
   onChangeTheme: (theme: "dark" | "light") => void;
   currentTheme: "dark" | "light";
@@ -37,6 +38,7 @@ export function CommandPalette({
   query,
   onClose,
   onScrollToSection,
+  onScrollToSegment,
   onLoadSession,
   onChangeTheme,
   currentTheme,
@@ -45,6 +47,7 @@ export function CommandPalette({
   const listRef = useRef<HTMLDivElement>(null);
 
   const sections = useTranscriptStore((s) => s.sections);
+  const sortedSegments = useTranscriptStore((s) => s.sortedSegments);
 
   // --- History state ---
   const [historyItems, setHistoryItems] = useState<SessionHistoryItem[]>([]);
@@ -118,14 +121,14 @@ export function CommandPalette({
       : query.slice(1).trim().toLowerCase();
 
     if (mode === "sections") {
-      return buildSectionItems(sections, searchText);
+      return buildSectionItems(sections, sortedSegments, searchText, onScrollToSegment, onClose);
     }
     if (mode === "history") {
       return buildHistoryItemsFromData(historyItems, searchText, onLoadSession, onClose);
     }
     // settings
     return buildSettingsItems(searchText, currentTheme, onChangeTheme, onClose);
-  }, [mode, query, sections, historyItems, onLoadSession, onClose, currentTheme, onChangeTheme]);
+  }, [mode, query, sections, sortedSegments, historyItems, onLoadSession, onScrollToSegment, onClose, currentTheme, onChangeTheme]);
 
   // Reset focus when opened or query changes
   useEffect(() => {
@@ -230,9 +233,9 @@ export function CommandPalette({
       <div className="command-palette-list" ref={listRef}>
         {items.length === 0 ? (
           <div className="command-palette-empty">
-            {mode === "sections" && "セクションがありません"}
-            {mode === "history" && (historyLoading ? "読み込み中…" : "履歴がありません")}
-            {mode === "settings" && "一致するコマンドがありません"}
+            {mode === "sections" && "No sections found"}
+            {mode === "history" && (historyLoading ? "Loading…" : "No history available")}
+            {mode === "settings" && "No matching commands"}
           </div>
         ) : (
           <>
@@ -256,7 +259,7 @@ export function CommandPalette({
                 onClick={loadMoreHistory}
               >
                 <span className="command-palette-item-label">
-                  {historyLoading ? "読み込み中…" : "↓ さらに表示する"}
+                  {historyLoading ? "Loading…" : "↓ Load more"}
                 </span>
               </div>
             )}
@@ -273,24 +276,80 @@ export function CommandPalette({
 
 function buildSectionItems(
   sections: Section[],
-  search: string
+  sortedSegments: TranscriptSegmentView[],
+  search: string,
+  onScrollToSegment: (segmentId: string) => void,
+  onClose: () => void
 ): PaletteItem[] {
   const sorted = [...sections].sort((a, b) => a.beforeSequenceId - b.beforeSequenceId);
 
-  return sorted
-    .filter((s) => {
-      if (!search) return true;
-      return (
-        s.title.toLowerCase().includes(search) ||
-        s.description.toLowerCase().includes(search)
-      );
-    })
-    .map((s, idx) => ({
-      id: s.id,
-      label: `${idx + 1}. ${s.title}`,
-      description: s.description || undefined,
-      section: s,
-    }));
+  const filtered = sorted.filter((s) => {
+    if (!search) return true;
+    return (
+      s.title.toLowerCase().includes(search) ||
+      s.description.toLowerCase().includes(search)
+    );
+  });
+
+  // If exactly one section matches (or search targets one section), show its annotations
+  if (filtered.length === 1) {
+    const section = filtered[0];
+    const sectionIdx = sorted.indexOf(section);
+    const nextSection = sorted[sectionIdx + 1];
+
+    // Find segments belonging to this section
+    const sectionSegments = sortedSegments.filter((seg) => {
+      if (seg.sequenceId < section.beforeSequenceId) return false;
+      if (nextSection && seg.sequenceId >= nextSection.beforeSequenceId) return false;
+      return true;
+    });
+
+    const items: PaletteItem[] = [
+      {
+        id: section.id,
+        label: `§ ${section.title}`,
+        description: section.description || undefined,
+        section,
+      },
+    ];
+
+    // Add comments from segments in this section
+    for (const seg of sectionSegments) {
+      for (const comment of seg.comments) {
+        items.push({
+          id: `comment-${comment.id}`,
+          label: `💬 ${comment.comment_text}`,
+          description: comment.author_name ? `by ${comment.author_name}` : seg.displayText.slice(0, 40),
+          action: () => {
+            onScrollToSegment(seg.id);
+            onClose();
+          },
+        });
+      }
+      for (const hl of seg.highlights) {
+        const colorLabel = hl.color === "todo" ? "📌 TODO" : hl.color === "fixme" ? "🔴 FIXME" : `🖍 ${hl.color}`;
+        items.push({
+          id: `highlight-${hl.id}`,
+          label: `${colorLabel}${hl.note ? `: ${hl.note}` : ""}`,
+          description: seg.displayText.slice(0, 50),
+          action: () => {
+            onScrollToSegment(seg.id);
+            onClose();
+          },
+        });
+      }
+    }
+
+    return items;
+  }
+
+  // Default: list all matching sections
+  return filtered.map((s, idx) => ({
+    id: s.id,
+    label: `${idx + 1}. ${s.title}`,
+    description: s.description || undefined,
+    section: s,
+  }));
 }
 
 function buildHistoryItemsFromData(
@@ -307,7 +366,7 @@ function buildHistoryItemsFromData(
   });
 
   return filtered.map((s) => {
-    const title = s.meeting_title || "無題の会議";
+    const title = s.meeting_title || "Untitled Meeting";
     const date = formatSessionDate(s.started_at);
     return {
       id: s.session_id,
@@ -348,7 +407,7 @@ function buildSettingsItems(
   const allItems: PaletteItem[] = [
     {
       id: "settings-theme-toggle",
-      label: `カラーテーマ: ${currentTheme === "dark" ? "ダークモード → ライトに切替" : "ライトモード → ダークに切替"}`,
+      label: `Theme: ${currentTheme === "dark" ? "Dark → Light" : "Light → Dark"}`,
       description: "Toggle color theme",
       action: () => {
         onChangeTheme(currentTheme === "dark" ? "light" : "dark");
@@ -357,13 +416,13 @@ function buildSettingsItems(
     },
     {
       id: "settings-obsidian",
-      label: "To Obsidian Mode (Coming Soon)",
-      description: "Obsidianとの連携モード",
+      label: "Obsidian Integration (Coming Soon)",
+      description: "Sync notes to Obsidian vault",
     },
     {
       id: "settings-github",
-      label: "To GitHub Repo Page",
-      description: "GitHubリポジトリを開く",
+      label: "Open GitHub Repo",
+      description: "View source on GitHub",
       action: () => {
         window.open("https://github.com/kobayashi-shuto-0105/meetily-live-viewer", "_blank", "noopener,noreferrer");
         onClose();
@@ -371,8 +430,8 @@ function buildSettingsItems(
     },
     {
       id: "settings-research-agent",
-      label: "To Research Agent (Coming Soon)",
-      description: "リサーチエージェントとの連携",
+      label: "Research Agent (Coming Soon)",
+      description: "AI-powered research assistant",
     },
   ];
 

@@ -273,6 +273,113 @@ button:disabled { cursor: default; }
   overflow: hidden;
 }
 
+/* --- App main layout (note panel + transcript viewer) --- */
+.app-main {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* --- Note Panel --- */
+.note-panel {
+  width: 280px;
+  min-width: 200px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border-subtle);
+  background: var(--bg-surface);
+}
+
+.note-panel-header {
+  padding: 16px 18px 10px;
+  border-bottom: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+}
+
+.note-panel-title {
+  font-size: 0.82rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-3);
+}
+
+.note-panel-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 14px 24px;
+}
+
+.note-panel-empty {
+  padding: 24px 8px;
+  text-align: center;
+  font-size: 0.82rem;
+  color: var(--text-3);
+  line-height: 1.6;
+}
+
+.note-block {
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.note-block:last-child {
+  border-bottom: none;
+}
+
+.note-block-heading {
+  margin: 0 0 4px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-1);
+  cursor: pointer;
+  line-height: 1.3;
+  transition: color 120ms;
+}
+
+.note-block-heading:hover {
+  color: var(--accent);
+}
+
+.note-block-desc {
+  margin: 0 0 8px;
+  font-size: 0.78rem;
+  color: var(--text-3);
+  line-height: 1.4;
+}
+
+.note-block-editor {
+  width: 100%;
+  min-height: 48px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background: var(--bg-hover);
+  color: var(--text-1);
+  font-size: 0.82rem;
+  line-height: 1.5;
+  resize: vertical;
+  outline: none;
+  transition: border-color 120ms;
+}
+
+.note-block-editor:focus {
+  border-color: var(--accent);
+}
+
+.note-block-editor::placeholder {
+  color: var(--text-3);
+}
+
+@media (max-width: 900px) {
+  .note-panel {
+    display: none;
+  }
+}
+
 .transcript-scroll {
   min-height: 0;
   flex: 1;
@@ -948,6 +1055,7 @@ button:disabled { cursor: default; }
 
 .command-input::placeholder {
   color: rgba(255 255 255 / 0.52);
+  transition: opacity 200ms ease;
 }
 
 .command-kbd {

@@ -7,6 +7,7 @@ import { useTranscriptStore } from "./stores/transcriptStore";
 import { TranscriptViewer } from "./components/TranscriptViewer";
 import type { TranscriptViewerHandle } from "./components/TranscriptViewer";
 import { CommandPalette } from "./components/CommandPalette";
+import { NotePanel } from "./components/NotePanel";
 import { OnboardingModal } from "./components/OnboardingModal";
 import { loadAuthorName } from "./stores/authorName";
 import type { TranscriptSegmentResponse } from "./types";
@@ -420,6 +421,7 @@ function App() {
                   setCommandQuery("");
                 }}
                 onScrollToSection={(beforeSeqId) => viewerRef.current?.scrollToSection(beforeSeqId)}
+                onScrollToSegment={(segId) => viewerRef.current?.scrollToSegment(segId)}
                 onLoadSession={handleLoadSession}
                 onChangeTheme={handleChangeTheme}
                 currentTheme={theme}
@@ -429,7 +431,10 @@ function App() {
           <ConnectionBadge />
         </header>
 
-        <TranscriptViewer ref={viewerRef} />
+        <div className="app-main">
+          <NotePanel onScrollToSection={(beforeSeqId) => viewerRef.current?.scrollToSection(beforeSeqId)} />
+          <TranscriptViewer ref={viewerRef} />
+        </div>
       </div>
     </div>
   );
@@ -438,6 +443,12 @@ function App() {
 // ----------------------------------------------------------------
 // Sub-components
 // ----------------------------------------------------------------
+
+const PLACEHOLDER_HINTS = [
+  "Search sections…",
+  "# Browse history",
+  "> Run command",
+] as const;
 
 function CommandBarTrigger({
   visible,
@@ -456,6 +467,16 @@ function CommandBarTrigger({
   onFocusInput: () => void;
   inputRef: RefObject<HTMLInputElement | null>;
 }) {
+  const [hintIndex, setHintIndex] = useState(0);
+
+  // Rotate placeholder hints every 3 seconds
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setHintIndex((i) => (i + 1) % PLACEHOLDER_HINTS.length);
+    }, 3000);
+    return () => clearInterval(interval);
+  }, []);
+
   return (
     <div
       className={`command-bar${visible ? " is-visible" : ""}`}
@@ -478,8 +499,8 @@ function CommandBarTrigger({
         onFocus={onFocusInput}
         autoComplete="off"
         spellCheck={false}
-        placeholder="セクション検索 / コマンドを入力"
-        aria-label="コマンド入力"
+        placeholder={PLACEHOLDER_HINTS[hintIndex]}
+        aria-label="Command input"
       />
       <span className="command-kbd">⌘ P</span>
     </div>
