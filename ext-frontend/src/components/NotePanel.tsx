@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import type { Block, PartialBlock } from "@blocknote/core";
 import { useCreateBlockNote } from "@blocknote/react";
 import { BlockNoteView } from "@blocknote/shadcn";
@@ -130,15 +131,31 @@ export function NotePanel() {
     return () => window.clearTimeout(timeout);
   }, [session?.sessionId, notesContent, editor, loadNotes]);
 
+  const handleEditorKeyDownCapture = (event: ReactKeyboardEvent<HTMLElement>) => {
+    if (event.key === "Tab") {
+      event.preventDefault();
+      event.stopPropagation();
+      document.execCommand("insertText", false, "  ");
+      return;
+    }
+
+    // macOS Ctrl+H conventionally behaves as Backspace in text fields.
+    if (event.ctrlKey && !event.metaKey && !event.altKey && event.key.toLowerCase() === "h") {
+      event.preventDefault();
+      event.stopPropagation();
+      document.execCommand("delete");
+    }
+  };
+
   return (
-    <aside className="note-panel">
+    <aside className="note-panel" onKeyDownCapture={handleEditorKeyDownCapture}>
       <div className="note-panel-content">
         <div className="note-block-editor">
           <BlockNoteView
             editor={editor}
             editable
             theme="light"
-            slashMenu
+            slashMenu={false}
             formattingToolbar
           />
         </div>

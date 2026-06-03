@@ -577,6 +577,7 @@ function CommandBarTrigger({
         }}
         autoComplete="off"
         spellCheck={false}
+        tabIndex={visible ? 0 : -1}
         placeholder={PLACEHOLDER_HINTS[hintIndex]}
         aria-label="Command input"
       />

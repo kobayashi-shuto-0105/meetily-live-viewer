@@ -3821,10 +3821,11 @@ button:disabled { cursor: default; }
 
 /* --- Follow-up: transparent rich notes surface ---------------- */
 .note-panel {
-  top: 88px;
-  left: 28px;
-  max-height: calc(100vh - 116px);
-  height: calc(100vh - 116px);
+  top: 82px;
+  left: 24px;
+  width: clamp(300px, 21vw, 340px);
+  max-height: calc(100vh - 106px);
+  height: calc(100vh - 106px);
   border-color: rgba(255 255 255 / 0.16);
   background:
     linear-gradient(180deg, rgba(255 255 255 / 0.095), rgba(255 255 255 / 0.018)),
@@ -3854,11 +3855,20 @@ button:disabled { cursor: default; }
 }
 
 .note-block-editor :where(.bn-editor) {
-  min-height: calc(100vh - 116px);
-  height: calc(100vh - 116px);
+  min-height: calc(100vh - 106px);
+  height: calc(100vh - 106px);
   overflow-y: auto;
-  padding: 22px 24px 30px;
+  padding: 14px 16px 22px !important;
+  padding-inline: 16px !important;
   background: transparent !important;
+}
+
+.note-block-editor :where(.bn-block-outer) {
+  margin-inline: 0 !important;
+}
+
+.note-block-editor :where(.bn-block-content) {
+  padding-inline: 0 !important;
 }
 
 .note-block-editor :where(.bn-block-outer),
@@ -3886,15 +3896,18 @@ button:disabled { cursor: default; }
 
 @media (max-width: 1400px) {
   .note-panel {
-    top: 88px;
-    height: calc(100vh - 116px);
-    max-height: calc(100vh - 116px);
+    top: 82px;
+    left: 20px;
+    width: 292px;
+    height: calc(100vh - 106px);
+    max-height: calc(100vh - 106px);
   }
 
   .note-block-editor :where(.bn-editor) {
-    min-height: calc(100vh - 116px);
-    height: calc(100vh - 116px);
-    padding: 18px 16px 24px;
+    min-height: calc(100vh - 106px);
+    height: calc(100vh - 106px);
+    padding: 12px 14px 20px !important;
+    padding-inline: 14px !important;
   }
 }
 
