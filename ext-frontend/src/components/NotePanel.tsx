@@ -155,7 +155,7 @@ export function NotePanel() {
             editor={editor}
             editable
             theme="light"
-            slashMenu={false}
+            slashMenu
             formattingToolbar
           />
         </div>
