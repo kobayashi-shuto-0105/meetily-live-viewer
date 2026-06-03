@@ -8,14 +8,6 @@ import "@blocknote/core/fonts/inter.css";
 import { apiClient } from "../api/client";
 import { loadAuthorName } from "../stores/authorName";
 import { useTranscriptStore } from "../stores/transcriptStore";
-import type { NotesAiAction } from "../types";
-
-const AI_ACTIONS: Array<{ action: NotesAiAction; label: string }> = [
-  { action: "continue", label: "Continue" },
-  { action: "improve", label: "Improve" },
-  { action: "summarize_transcript", label: "Summarize" },
-  { action: "action_items", label: "Actions" },
-];
 
 // ----------------------------------------------------------------
 // NotePanel – Collaborative glass BlockNote editor on the left side.
@@ -25,14 +17,10 @@ export function NotePanel() {
   const session = useTranscriptStore((s) => s.session);
   const notesContent = useTranscriptStore((s) => s.notesContent);
   const notesContentJson = useTranscriptStore((s) => s.notesContentJson);
-  const notesUpdatedBy = useTranscriptStore((s) => s.notesUpdatedBy);
   const notesUpdatedAt = useTranscriptStore((s) => s.notesUpdatedAt);
-  const sortedSegments = useTranscriptStore((s) => s.sortedSegments);
   const setNotesDocument = useTranscriptStore((s) => s.setNotesDocument);
   const loadNotes = useTranscriptStore((s) => s.loadNotes);
-  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
-  const [aiState, setAiState] = useState<"idle" | "loading" | "error">("idle");
-  const [aiEnabled, setAiEnabled] = useState(false);
+  const [, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const lastSavedRef = useRef(notesContent);
   const isApplyingRemoteRef = useRef(false);
 
@@ -53,13 +41,6 @@ export function NotePanel() {
       checkListItem: "Task",
     },
   });
-
-  useEffect(() => {
-    apiClient
-      .getExternalWebSettings()
-      .then((settings) => setAiEnabled(settings.notes_ai_enabled))
-      .catch(() => setAiEnabled(false));
-  }, []);
 
   useEffect(() => {
     lastSavedRef.current = notesContent;
@@ -149,68 +130,9 @@ export function NotePanel() {
     return () => window.clearTimeout(timeout);
   }, [session?.sessionId, notesContent, editor, loadNotes]);
 
-  const statusLabel = useMemo(() => {
-    if (!session) return "Preview";
-    if (saveState === "saving") return "Saving";
-    if (saveState === "error") return "Offline";
-    if (notesUpdatedBy && notesUpdatedAt) return `Updated by ${notesUpdatedBy}`;
-    if (saveState === "saved") return "Saved";
-    return "Shared";
-  }, [notesUpdatedAt, notesUpdatedBy, saveState, session]);
-
-  async function runAiAction(action: NotesAiAction) {
-    if (!aiEnabled || aiState === "loading") return;
-
-    setAiState("loading");
-    try {
-      const currentNotes = await editor.blocksToMarkdownLossy(editor.document);
-      const selectedText = getSelectedText();
-      const transcriptContext = sortedSegments
-        .slice(-24)
-        .map((segment) => segment.displayText)
-        .join("\n");
-
-      const result = await apiClient.generateNotesAi({
-        action,
-        notesText: currentNotes,
-        selectedText,
-        transcriptContext,
-      });
-
-      if (!result.text.trim()) return;
-      const blocks = await editor.tryParseMarkdownToBlocks(result.text);
-      const lastBlock = editor.document[editor.document.length - 1];
-      editor.insertBlocks(blocks, lastBlock, "after");
-      setAiState("idle");
-    } catch (error) {
-      console.warn("[notes] Notes AI failed:", error);
-      setAiState("error");
-    }
-  }
-
   return (
     <aside className="note-panel">
       <div className="note-panel-content">
-        <div className="note-panel-topline">
-          <p className="note-panel-title">Notes</p>
-          <span className={`note-sync-state is-${saveState}`}>{statusLabel}</span>
-        </div>
-        <div className="note-ai-toolbar" aria-label="Notes AI actions">
-          {AI_ACTIONS.map((item) => (
-            <button
-              key={item.action}
-              type="button"
-              onClick={() => runAiAction(item.action)}
-              disabled={!aiEnabled || aiState === "loading"}
-              title={aiEnabled ? `${item.label} with Ollama` : "Enable Notes AI in Meetily settings"}
-            >
-              {item.label}
-            </button>
-          ))}
-          <span className={`note-ai-state is-${aiState}`}>
-            {aiEnabled ? (aiState === "loading" ? "Thinking" : aiState === "error" ? "AI unavailable" : "Ollama") : "AI off"}
-          </span>
-        </div>
         <div className="note-block-editor">
           <BlockNoteView
             editor={editor}
@@ -223,10 +145,6 @@ export function NotePanel() {
       </div>
     </aside>
   );
-}
-
-function getSelectedText(): string {
-  return globalThis.getSelection?.()?.toString().trim() ?? "";
 }
 
 function blockToText(block?: Block): string {
