@@ -335,7 +335,7 @@ function App() {
           target.tagName === "TEXTAREA" ||
           target.isContentEditable);
 
-      if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === "p") {
+      if (e.metaKey && !e.ctrlKey && !e.altKey && e.key.toLowerCase() === "p") {
         e.preventDefault();
         if (hideTimerRef.current) {
           clearTimeout(hideTimerRef.current);
