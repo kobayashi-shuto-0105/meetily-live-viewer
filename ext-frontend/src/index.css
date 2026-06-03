@@ -3358,6 +3358,16 @@ button:disabled { cursor: default; }
     line-height: 1.62;
   }
 
+  .note-block-editor,
+  .note-block-editor :where(.bn-editor) {
+    min-height: 660px;
+  }
+
+  .note-block-editor :where(.bn-block-content) {
+    font-size: 0.82rem;
+    line-height: 1.62;
+  }
+
   .note-overview {
     padding-bottom: 18px;
   }
@@ -3398,6 +3408,139 @@ button:disabled { cursor: default; }
   .note-panel {
     display: none;
   }
+}
+
+.note-ai-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin: -2px 0 14px;
+}
+
+.note-ai-toolbar button {
+  height: 28px;
+  padding: 0 9px;
+  border: 1px solid rgba(225 236 255 / 0.18);
+  border-radius: 8px;
+  background: rgba(255 255 255 / 0.08);
+  color: rgba(245 249 255 / 0.82);
+  cursor: pointer;
+  font-size: 0.72rem;
+  font-weight: 760;
+  letter-spacing: 0;
+  transition: border-color 0.16s ease, background 0.16s ease, color 0.16s ease;
+}
+
+.note-ai-toolbar button:hover:not(:disabled) {
+  border-color: rgba(139 179 255 / 0.48);
+  background: rgba(98 139 255 / 0.18);
+  color: rgba(255 255 255 / 0.96);
+}
+
+.note-ai-toolbar button:disabled {
+  cursor: default;
+  opacity: 0.44;
+}
+
+.note-ai-state {
+  margin-left: auto;
+  color: rgba(220 232 255 / 0.44);
+  font-size: 0.7rem;
+  font-weight: 740;
+}
+
+.note-ai-state.is-loading {
+  color: rgba(125 183 255 / 0.86);
+}
+
+.note-ai-state.is-error {
+  color: rgba(255 158 158 / 0.86);
+}
+
+.note-block-editor {
+  min-height: 540px;
+  color: rgba(248 251 255 / 0.92);
+}
+
+.note-block-editor :where(.bn-container) {
+  --bn-colors-editor-text: rgba(248 251 255 / 0.94);
+  --bn-colors-editor-background: transparent;
+  --bn-colors-menu-text: rgba(18 28 48 / 0.94);
+  --bn-colors-menu-background: rgba(255 255 255 / 0.98);
+  --bn-colors-tooltip-text: rgba(18 28 48 / 0.94);
+  --bn-colors-tooltip-background: rgba(255 255 255 / 0.98);
+  background: transparent;
+  color: rgba(248 251 255 / 0.94);
+  font-family: inherit;
+}
+
+.note-block-editor :where(.bn-editor) {
+  min-height: 540px;
+  padding: 0;
+  background: transparent;
+}
+
+.note-block-editor :where(.bn-block-content) {
+  color: rgba(248 251 255 / 0.94);
+  font-size: 0.94rem;
+  font-weight: 560;
+  line-height: 1.72;
+}
+
+.note-block-editor :where(.bn-block-content h1),
+.note-block-editor :where(.bn-block-content h2),
+.note-block-editor :where(.bn-block-content h3) {
+  color: rgba(255 255 255 / 0.96);
+  letter-spacing: 0;
+}
+
+.note-block-editor :where(.bn-inline-content:empty::before) {
+  color: rgba(238 246 255 / 0.55);
+}
+
+[data-theme="light"] .note-ai-toolbar button {
+  border-color: rgba(61 80 118 / 0.16);
+  background: rgba(255 255 255 / 0.54);
+  color: rgba(31 44 70 / 0.76);
+}
+
+[data-theme="light"] .note-ai-toolbar button:hover:not(:disabled) {
+  border-color: rgba(76 111 205 / 0.34);
+  background: rgba(94 126 220 / 0.12);
+  color: rgba(20 33 58 / 0.94);
+}
+
+[data-theme="light"] .note-ai-state {
+  color: rgba(52 65 94 / 0.52);
+}
+
+[data-theme="light"] .note-ai-state.is-loading {
+  color: rgba(65 105 220 / 0.80);
+}
+
+[data-theme="light"] .note-ai-state.is-error {
+  color: rgba(190 75 75 / 0.82);
+}
+
+[data-theme="light"] .note-block-editor :where(.bn-container) {
+  --bn-colors-editor-text: rgba(13 24 45 / 0.94);
+  --bn-colors-editor-background: transparent;
+  color: rgba(13 24 45 / 0.94);
+}
+
+[data-theme="light"] .note-block-editor :where(.bn-block-content) {
+  color: rgba(13 24 45 / 0.94);
+}
+
+[data-theme="light"] .note-block-editor :where(.bn-block-content h1),
+[data-theme="light"] .note-block-editor :where(.bn-block-content h2),
+[data-theme="light"] .note-block-editor :where(.bn-block-content h3) {
+  color: rgba(13 20 38 / 0.96);
+}
+
+[data-theme="light"] .note-block-editor :where(.bn-inline-content:empty::before) {
+  color: rgba(24 36 61 / 0.52);
 }
 
 /* --- Command palette focused section preview ------------------ */

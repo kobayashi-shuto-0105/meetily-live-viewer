@@ -330,6 +330,7 @@ export interface SessionNotesPayload {
   session_id: string;
   meeting_id: string | null;
   content: string;
+  content_json: unknown | null;
   updated_by: string | null;
   updated_at: string;
 }
@@ -363,6 +364,7 @@ export interface SessionNotesResponse {
   session_id: string;
   meeting_id: string | null;
   content: string;
+  content_json: unknown | null;
   updated_by: string | null;
   created_at: string | null;
   updated_at: string | null;
@@ -371,7 +373,29 @@ export interface SessionNotesResponse {
 /** PUT /api/sessions/:id/notes request */
 export interface UpdateSessionNotesRequest {
   content: string;
+  contentJson?: unknown;
   authorName?: string;
+}
+
+export interface ExternalWebSettingsResponse {
+  notes_ai_enabled: boolean;
+  ollama_endpoint: string;
+  ollama_model: string;
+  updated_at: string | null;
+}
+
+export type NotesAiAction = "continue" | "improve" | "summarize_transcript" | "action_items";
+
+export interface NotesAiRequest {
+  action: NotesAiAction;
+  notesText: string;
+  selectedText?: string;
+  transcriptContext?: string;
+  instruction?: string;
+}
+
+export interface NotesAiResponse {
+  text: string;
 }
 
 // =============================================================================

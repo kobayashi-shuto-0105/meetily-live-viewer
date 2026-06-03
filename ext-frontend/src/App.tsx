@@ -168,6 +168,7 @@ function App() {
         meeting_id: null,
         content:
           "Meeting overview\n\nA focused discussion on summary quality, transcript cleanup, and follow-up ownership.\n\nKey takeaways\n- Keep transcript sections centered while notes stay in the left glass panel.\n- Comment and highlight details are reviewed from focused sections.\n- The shared notes area should remain editable during the session.\n\nAction items\n[ ] Tighten wording for the recap\n[ ] Confirm which comments should become summary notes",
+        content_json: null,
         updated_by: "Preview",
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),

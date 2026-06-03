@@ -44,6 +44,7 @@ interface TranscriptState {
 
   /** Shared session NOTES document. */
   notesContent: string;
+  notesContentJson: unknown | null;
   notesUpdatedBy: string | null;
   notesUpdatedAt: string | null;
 
@@ -85,6 +86,7 @@ interface TranscriptState {
   // --- shared notes actions ---
   loadNotes: (response: SessionNotesResponse) => void;
   setNotesContent: (content: string) => void;
+  setNotesDocument: (content: string, contentJson: unknown) => void;
   applyNotesFromServer: (payload: SessionNotesPayload) => void;
 }
 
@@ -118,6 +120,17 @@ function createClientId(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+function normalizeNotesJson(value: unknown): unknown | null {
+  if (typeof value === "string") {
+    try {
+      return JSON.parse(value) as unknown;
+    } catch {
+      return null;
+    }
+  }
+  return value ?? null;
+}
+
 // ----------------------------------------------------------------
 // Store
 // ----------------------------------------------------------------
@@ -133,6 +146,7 @@ export const useTranscriptStore = create<TranscriptState>((set, get) => ({
   sectionEditingId: null,
   sectionInsertAt: null,
   notesContent: "",
+  notesContentJson: null,
   notesUpdatedBy: null,
   notesUpdatedAt: null,
 
@@ -149,6 +163,7 @@ export const useTranscriptStore = create<TranscriptState>((set, get) => ({
       sectionEditingId: null,
       sectionInsertAt: null,
       notesContent: "",
+      notesContentJson: null,
       notesUpdatedBy: null,
       notesUpdatedAt: null,
     }),
@@ -456,17 +471,22 @@ export const useTranscriptStore = create<TranscriptState>((set, get) => ({
   loadNotes: (response) =>
     set({
       notesContent: response.content,
+      notesContentJson: normalizeNotesJson(response.content_json),
       notesUpdatedBy: response.updated_by,
       notesUpdatedAt: response.updated_at,
     }),
 
   setNotesContent: (content) => set({ notesContent: content }),
 
+  setNotesDocument: (content, contentJson) =>
+    set({ notesContent: content, notesContentJson: contentJson }),
+
   applyNotesFromServer: (payload) =>
     set((state) => {
       if (state.session?.sessionId !== payload.session_id) return state;
       return {
         notesContent: payload.content,
+        notesContentJson: normalizeNotesJson(payload.content_json),
         notesUpdatedBy: payload.updated_by,
         notesUpdatedAt: payload.updated_at,
       };

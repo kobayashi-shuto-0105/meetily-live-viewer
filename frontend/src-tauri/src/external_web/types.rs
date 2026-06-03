@@ -216,6 +216,8 @@ pub struct SessionNotesPayload {
     pub meeting_id: Option<String>,
     /// NOTES 本文
     pub content: String,
+    /// BlockNote JSON document (when available)
+    pub content_json: Option<String>,
     /// 最終更新者名
     pub updated_by: Option<String>,
     /// 更新日時（ISO8601 形式）

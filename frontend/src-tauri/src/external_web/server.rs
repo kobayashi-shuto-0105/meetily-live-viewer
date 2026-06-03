@@ -41,7 +41,7 @@ use axum::{
     Json, Router,
 };
 use futures_util::{SinkExt, StreamExt};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use tower_http::cors::CorsLayer;
 
@@ -194,6 +194,12 @@ fn build_router(state: ServerState) -> Router {
             "/api/sessions/{session_id}/notes",
             get(get_session_notes).put(update_session_notes),
         )
+        // External Web UI settings and local Notes AI
+        .route(
+            "/api/settings/external-web",
+            get(get_external_web_settings).put(update_external_web_settings),
+        )
+        .route("/api/notes/ai", post(generate_notes_ai))
         // セクション更新 / 削除（同一パスに PUT と DELETE を束ねる）
         .route(
             "/api/sections/{section_id}",
@@ -1291,6 +1297,7 @@ async fn get_session_notes(
                 "session_id": note.session_id,
                 "meeting_id": note.meeting_id,
                 "content": note.content,
+                "content_json": note.content_json,
                 "updated_by": note.updated_by,
                 "created_at": note.created_at,
                 "updated_at": note.updated_at,
@@ -1303,6 +1310,7 @@ async fn get_session_notes(
                 "session_id": session_id,
                 "meeting_id": serde_json::Value::Null,
                 "content": "",
+                "content_json": serde_json::Value::Null,
                 "updated_by": serde_json::Value::Null,
                 "created_at": serde_json::Value::Null,
                 "updated_at": serde_json::Value::Null,
@@ -1329,6 +1337,7 @@ async fn get_session_notes(
 #[serde(rename_all = "camelCase")]
 struct UpdateSessionNotesRequest {
     content: String,
+    content_json: Option<serde_json::Value>,
     author_name: Option<String>,
 }
 
@@ -1338,10 +1347,12 @@ async fn update_session_notes(
     Path(session_id): Path<String>,
     Json(body): Json<UpdateSessionNotesRequest>,
 ) -> impl IntoResponse {
+    let content_json = body.content_json.as_ref().map(serde_json::Value::to_string);
     match ExternalWebRepository::upsert_note(
         &state.pool,
         &session_id,
         &body.content,
+        content_json.as_deref(),
         body.author_name.as_deref(),
     )
     .await
@@ -1354,6 +1365,7 @@ async fn update_session_notes(
                         session_id: note.session_id.clone(),
                         meeting_id: note.meeting_id.clone(),
                         content: note.content.clone(),
+                        content_json: note.content_json.clone(),
                         updated_by: note.updated_by.clone(),
                         updated_at: note.updated_at.clone(),
                     },
@@ -1365,6 +1377,7 @@ async fn update_session_notes(
                     "session_id": note.session_id,
                     "meeting_id": note.meeting_id,
                     "content": note.content,
+                    "content_json": note.content_json,
                     "updated_by": note.updated_by,
                     "created_at": note.created_at,
                     "updated_at": note.updated_at,
@@ -1390,8 +1403,297 @@ async fn update_session_notes(
 }
 
 // =============================================================================
+// External Web UI settings / local Notes AI
+// =============================================================================
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateExternalWebSettingsRequest {
+    notes_ai_enabled: bool,
+    ollama_endpoint: String,
+    ollama_model: String,
+}
+
+async fn get_external_web_settings(State(state): State<ServerState>) -> impl IntoResponse {
+    match ExternalWebRepository::get_external_web_settings(&state.pool).await {
+        Ok(settings) => (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "notes_ai_enabled": settings.notes_ai_enabled != 0,
+                "ollama_endpoint": settings.ollama_endpoint,
+                "ollama_model": settings.ollama_model,
+                "updated_at": settings.updated_at,
+            })),
+        )
+            .into_response(),
+        Err(e) => {
+            log::error!("External Web UI: failed to get settings: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": "Failed to get settings" })),
+            )
+                .into_response()
+        }
+    }
+}
+
+async fn update_external_web_settings(
+    State(state): State<ServerState>,
+    Json(body): Json<UpdateExternalWebSettingsRequest>,
+) -> impl IntoResponse {
+    match validate_ollama_settings(&body.ollama_endpoint, &body.ollama_model) {
+        Ok((endpoint, model)) => {
+            match ExternalWebRepository::save_external_web_settings(
+                &state.pool,
+                body.notes_ai_enabled,
+                &endpoint,
+                &model,
+            )
+            .await
+            {
+                Ok(settings) => (
+                    StatusCode::OK,
+                    Json(serde_json::json!({
+                        "notes_ai_enabled": settings.notes_ai_enabled != 0,
+                        "ollama_endpoint": settings.ollama_endpoint,
+                        "ollama_model": settings.ollama_model,
+                        "updated_at": settings.updated_at,
+                    })),
+                )
+                    .into_response(),
+                Err(e) => {
+                    log::error!("External Web UI: failed to save settings: {}", e);
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(serde_json::json!({ "error": "Failed to save settings" })),
+                    )
+                        .into_response()
+                }
+            }
+        }
+        Err(message) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": message })),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NotesAiRequest {
+    action: NotesAiAction,
+    notes_text: String,
+    selected_text: Option<String>,
+    transcript_context: Option<String>,
+    instruction: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum NotesAiAction {
+    Continue,
+    Improve,
+    SummarizeTranscript,
+    ActionItems,
+}
+
+#[derive(Debug, Serialize)]
+struct OllamaChatRequest {
+    model: String,
+    messages: Vec<OllamaChatMessage>,
+    stream: bool,
+    options: OllamaOptions,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct OllamaChatMessage {
+    role: String,
+    content: String,
+}
+
+#[derive(Debug, Serialize)]
+struct OllamaOptions {
+    temperature: f32,
+    num_predict: i32,
+}
+
+#[derive(Debug, Deserialize)]
+struct OllamaChatResponse {
+    message: Option<OllamaChatMessage>,
+    error: Option<String>,
+}
+
+async fn generate_notes_ai(
+    State(state): State<ServerState>,
+    Json(body): Json<NotesAiRequest>,
+) -> impl IntoResponse {
+    let settings = match ExternalWebRepository::get_external_web_settings(&state.pool).await {
+        Ok(settings) => settings,
+        Err(e) => {
+            log::error!("External Web UI: failed to load AI settings: {}", e);
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": "Failed to load AI settings" })),
+            )
+                .into_response();
+        }
+    };
+
+    if settings.notes_ai_enabled == 0 {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "Notes AI is disabled in Meetily settings" })),
+        )
+            .into_response();
+    }
+
+    let (endpoint, model) = match validate_ollama_settings(&settings.ollama_endpoint, &settings.ollama_model) {
+        Ok(value) => value,
+        Err(message) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": message })),
+            )
+                .into_response();
+        }
+    };
+
+    let prompt = build_notes_ai_prompt(&body);
+    let request = OllamaChatRequest {
+        model,
+        stream: false,
+        options: OllamaOptions {
+            temperature: 0.25,
+            num_predict: 600,
+        },
+        messages: vec![
+            OllamaChatMessage {
+                role: "system".to_string(),
+                content: "You are Meetily Notes AI. Return only concise editor-ready meeting notes. Do not add greetings or markdown fences.".to_string(),
+            },
+            OllamaChatMessage {
+                role: "user".to_string(),
+                content: prompt,
+            },
+        ],
+    };
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(60))
+        .build();
+    let client = match client {
+        Ok(client) => client,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": format!("Failed to create Ollama client: {}", e) })),
+            )
+                .into_response();
+        }
+    };
+
+    let url = format!("{}/api/chat", endpoint.trim_end_matches('/'));
+    let response = match client.post(url).json(&request).send().await {
+        Ok(response) => response,
+        Err(e) => {
+            return (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({ "error": format!("Failed to reach Ollama: {}", e) })),
+            )
+                .into_response();
+        }
+    };
+
+    let status = response.status();
+    let parsed = response.json::<OllamaChatResponse>().await;
+    match parsed {
+        Ok(payload) if status.is_success() => {
+            let text = payload
+                .message
+                .map(|m| m.content)
+                .unwrap_or_default()
+                .trim()
+                .to_string();
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({ "text": text })),
+            )
+                .into_response()
+        }
+        Ok(payload) => (
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({
+                "error": payload.error.unwrap_or_else(|| format!("Ollama returned {}", status))
+            })),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({ "error": format!("Failed to parse Ollama response: {}", e) })),
+        )
+            .into_response(),
+    }
+}
+
+// =============================================================================
 // ヘルパー関数
 // =============================================================================
+
+fn validate_ollama_settings(endpoint: &str, model: &str) -> Result<(String, String), String> {
+    let endpoint = endpoint.trim().trim_end_matches('/').to_string();
+    let model = model.trim().to_string();
+
+    if endpoint.is_empty() {
+        return Err("Ollama URL is required".to_string());
+    }
+    if !endpoint.starts_with("http://") && !endpoint.starts_with("https://") {
+        return Err("Ollama URL must start with http:// or https://".to_string());
+    }
+    if model.is_empty() {
+        return Err("Ollama model is required".to_string());
+    }
+
+    Ok((endpoint, model))
+}
+
+fn build_notes_ai_prompt(body: &NotesAiRequest) -> String {
+    let selected = body
+        .selected_text
+        .as_deref()
+        .unwrap_or("")
+        .trim();
+    let transcript = body
+        .transcript_context
+        .as_deref()
+        .unwrap_or("")
+        .trim();
+    let instruction = body
+        .instruction
+        .as_deref()
+        .unwrap_or("")
+        .trim();
+
+    let task = match body.action {
+        NotesAiAction::Continue => {
+            "Continue the notes from the current context. Add only the next useful bullets or short paragraph."
+        }
+        NotesAiAction::Improve => {
+            "Rewrite the selected notes to be clearer, tighter, and meeting-note ready. Preserve meaning."
+        }
+        NotesAiAction::SummarizeTranscript => {
+            "Summarize the transcript context into concise meeting notes with key takeaways and decisions."
+        }
+        NotesAiAction::ActionItems => {
+            "Extract concrete action items from the transcript and notes. Use unchecked task list style."
+        }
+    };
+
+    format!(
+        "Task:\n{task}\n\nOptional user instruction:\n{instruction}\n\nCurrent notes:\n{notes}\n\nSelected text:\n{selected}\n\nTranscript context:\n{transcript}\n\nReturn only the text to insert into the notes.",
+        notes = body.notes_text.trim()
+    )
+}
 
 /// DB エラーを適切な HTTP ステータスコードに分類するヘルパー。
 /// - FK 制約違反 or 行なし → 404 Not Found（クライアント起因）
