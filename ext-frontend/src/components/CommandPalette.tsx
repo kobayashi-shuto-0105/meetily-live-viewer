@@ -497,12 +497,7 @@ function SectionFocusPreview({
   }
 
   return (
-    <aside className={`command-section-preview${isPaneFocused ? " is-pane-focused" : ""}`} aria-label="Focused section details">
-      <div className="command-section-preview-head">
-        <span>Focused section</span>
-        <strong>{section.title}</strong>
-        {section.description && <p>{section.description}</p>}
-      </div>
+    <aside className={`command-section-preview${isPaneFocused ? " is-pane-focused" : ""}`} aria-label={`${section.title} annotations`}>
       <div className="command-section-preview-list">
         {annotationItems.length === 0 ? (
           <div className="command-section-preview-empty">
@@ -527,7 +522,6 @@ function SectionFocusPreview({
           ))
         )}
       </div>
-      <div className="command-section-preview-footer">Ctrl+F enters notes, Ctrl+B returns to sections</div>
     </aside>
   );
 }
