@@ -189,9 +189,9 @@ export const TranscriptViewer = forwardRef<TranscriptViewerHandle>(
             const el = scrollRef.current;
             if (el) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
           }}
-          aria-label="リアルタイム追従モードに戻る"
+          aria-label="Return to live follow mode"
         >
-          ↓ 追従モードに戻る
+          ↓ Follow live
         </button>
       )}
 

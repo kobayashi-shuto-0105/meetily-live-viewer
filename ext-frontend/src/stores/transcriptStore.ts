@@ -12,6 +12,8 @@ import type {
   TranscriptSegmentResponse,
   Section,
   TranscriptSectionPayload,
+  SessionNotesPayload,
+  SessionNotesResponse,
 } from "../types";
 import { apiClient } from "../api/client";
 
@@ -39,6 +41,11 @@ interface TranscriptState {
 
   /** The sequenceId where a new section editor is open (before clicking Save). */
   sectionInsertAt: number | null;
+
+  /** Shared session NOTES document. */
+  notesContent: string;
+  notesUpdatedBy: string | null;
+  notesUpdatedAt: string | null;
 
   // --- actions ---
   setConnectionStatus: (status: ConnectionStatus) => void;
@@ -74,6 +81,11 @@ interface TranscriptState {
   applySectionFromServer: (payload: TranscriptSectionPayload) => void;
   /** Remove a section from a WebSocket event */
   removeSectionFromServer: (id: string) => void;
+
+  // --- shared notes actions ---
+  loadNotes: (response: SessionNotesResponse) => void;
+  setNotesContent: (content: string) => void;
+  applyNotesFromServer: (payload: SessionNotesPayload) => void;
 }
 
 // ----------------------------------------------------------------
@@ -120,6 +132,9 @@ export const useTranscriptStore = create<TranscriptState>((set, get) => ({
   sections: [],
   sectionEditingId: null,
   sectionInsertAt: null,
+  notesContent: "",
+  notesUpdatedBy: null,
+  notesUpdatedAt: null,
 
   setConnectionStatus: (status) => set({ connectionStatus: status }),
 
@@ -133,6 +148,9 @@ export const useTranscriptStore = create<TranscriptState>((set, get) => ({
       sections: [],
       sectionEditingId: null,
       sectionInsertAt: null,
+      notesContent: "",
+      notesUpdatedBy: null,
+      notesUpdatedAt: null,
     }),
 
   stopSession: () =>
@@ -434,6 +452,25 @@ export const useTranscriptStore = create<TranscriptState>((set, get) => ({
     set((state) => ({
       sections: state.sections.filter((s) => s.id !== id),
     })),
+
+  loadNotes: (response) =>
+    set({
+      notesContent: response.content,
+      notesUpdatedBy: response.updated_by,
+      notesUpdatedAt: response.updated_at,
+    }),
+
+  setNotesContent: (content) => set({ notesContent: content }),
+
+  applyNotesFromServer: (payload) =>
+    set((state) => {
+      if (state.session?.sessionId !== payload.session_id) return state;
+      return {
+        notesContent: payload.content,
+        notesUpdatedBy: payload.updated_by,
+        notesUpdatedAt: payload.updated_at,
+      };
+    }),
 }));
 
 // ----------------------------------------------------------------

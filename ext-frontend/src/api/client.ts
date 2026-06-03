@@ -29,6 +29,8 @@ import type {
   UpdateSectionRequest,
   SectionResponse,
   SessionHistoryResponse,
+  SessionNotesResponse,
+  UpdateSessionNotesRequest,
 } from "../types";
 import { getRuntimeAccessToken } from "./runtime";
 
@@ -350,6 +352,29 @@ export class ApiClient {
         `/api/sections/${sectionId}`
       );
     }
+  }
+
+  // -------------------------------------------------------------------------
+  // 共有 NOTES 操作
+  // -------------------------------------------------------------------------
+
+  async getSessionNotes(sessionId: string): Promise<SessionNotesResponse> {
+    return this.request<SessionNotesResponse>(
+      `/api/sessions/${encodeURIComponent(sessionId)}/notes`
+    );
+  }
+
+  async updateSessionNotes(
+    sessionId: string,
+    body: UpdateSessionNotesRequest
+  ): Promise<SessionNotesResponse> {
+    return this.request<SessionNotesResponse>(
+      `/api/sessions/${encodeURIComponent(sessionId)}/notes`,
+      {
+        method: "PUT",
+        body: JSON.stringify(body),
+      }
+    );
   }
 }
 

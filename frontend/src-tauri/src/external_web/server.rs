@@ -49,9 +49,9 @@ use crate::database::repositories::external_web::ExternalWebRepository;
 
 use super::state::ExternalWebState;
 use super::types::{
-    ExternalWebEvent, TranscriptCommentPayload, TranscriptHighlightDeletedPayload,
-    TranscriptHighlightPayload, TranscriptRevisionPayload, TranscriptSectionDeletedPayload,
-    TranscriptSectionPayload,
+    ExternalWebEvent, SessionNotesPayload, TranscriptCommentPayload,
+    TranscriptHighlightDeletedPayload, TranscriptHighlightPayload, TranscriptRevisionPayload,
+    TranscriptSectionDeletedPayload, TranscriptSectionPayload,
 };
 
 // =============================================================================
@@ -188,6 +188,11 @@ fn build_router(state: ServerState) -> Router {
         .route(
             "/api/sessions/{session_id}/sections",
             get(get_session_sections).post(create_section),
+        )
+        // セッション共有 NOTES の取得 / 更新
+        .route(
+            "/api/sessions/{session_id}/notes",
+            get(get_session_notes).put(update_session_notes),
         )
         // セクション更新 / 削除（同一パスに PUT と DELETE を束ねる）
         .route(
@@ -1264,6 +1269,120 @@ async fn delete_section(
                 Json(serde_json::json!({
                     "error": "Failed to delete section"
                 })),
+            )
+                .into_response()
+        }
+    }
+}
+
+// =============================================================================
+// 共有 NOTES 取得 / 更新
+// =============================================================================
+
+/// 指定セッションの共有 NOTES を取得する。
+async fn get_session_notes(
+    State(state): State<ServerState>,
+    Path(session_id): Path<String>,
+) -> impl IntoResponse {
+    match ExternalWebRepository::get_note_by_session(&state.pool, &session_id).await {
+        Ok(Some(note)) => (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "session_id": note.session_id,
+                "meeting_id": note.meeting_id,
+                "content": note.content,
+                "updated_by": note.updated_by,
+                "created_at": note.created_at,
+                "updated_at": note.updated_at,
+            })),
+        )
+            .into_response(),
+        Ok(None) => (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "session_id": session_id,
+                "meeting_id": serde_json::Value::Null,
+                "content": "",
+                "updated_by": serde_json::Value::Null,
+                "created_at": serde_json::Value::Null,
+                "updated_at": serde_json::Value::Null,
+            })),
+        )
+            .into_response(),
+        Err(e) => {
+            log::error!(
+                "External Web UI: failed to get notes (session_id={}): {}",
+                session_id,
+                e
+            );
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": "Failed to get notes" })),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// 共有 NOTES 更新リクエストのボディ。
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateSessionNotesRequest {
+    content: String,
+    author_name: Option<String>,
+}
+
+/// 指定セッションの共有 NOTES を更新し、全クライアントへ配信する。
+async fn update_session_notes(
+    State(state): State<ServerState>,
+    Path(session_id): Path<String>,
+    Json(body): Json<UpdateSessionNotesRequest>,
+) -> impl IntoResponse {
+    match ExternalWebRepository::upsert_note(
+        &state.pool,
+        &session_id,
+        &body.content,
+        body.author_name.as_deref(),
+    )
+    .await
+    {
+        Ok(note) => {
+            state
+                .external_state
+                .publish(ExternalWebEvent::SessionNotesUpdated(
+                    SessionNotesPayload {
+                        session_id: note.session_id.clone(),
+                        meeting_id: note.meeting_id.clone(),
+                        content: note.content.clone(),
+                        updated_by: note.updated_by.clone(),
+                        updated_at: note.updated_at.clone(),
+                    },
+                ));
+
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({
+                    "session_id": note.session_id,
+                    "meeting_id": note.meeting_id,
+                    "content": note.content,
+                    "updated_by": note.updated_by,
+                    "created_at": note.created_at,
+                    "updated_at": note.updated_at,
+                })),
+            )
+                .into_response()
+        }
+        Err(e) => {
+            let status = classify_db_error(&e);
+            log::error!(
+                "External Web UI: failed to update notes (session_id={}, status={}): {}",
+                session_id,
+                status,
+                e
+            );
+            (
+                status,
+                Json(serde_json::json!({ "error": "Failed to update notes" })),
             )
                 .into_response()
         }

@@ -31,7 +31,8 @@ export type ExternalWebEvent =
   | { type: "TranscriptHighlightDeleted"; payload: TranscriptHighlightDeletedPayload }
   | { type: "TranscriptSectionCreated"; payload: TranscriptSectionPayload }
   | { type: "TranscriptSectionUpdated"; payload: TranscriptSectionPayload }
-  | { type: "TranscriptSectionDeleted"; payload: TranscriptSectionDeletedPayload };
+  | { type: "TranscriptSectionDeleted"; payload: TranscriptSectionDeletedPayload }
+  | { type: "SessionNotesUpdated"; payload: SessionNotesPayload };
 
 // =============================================================================
 // イベントペイロード型
@@ -324,6 +325,15 @@ export interface TranscriptSectionDeletedPayload {
   session_id: string;
 }
 
+/** WebSocket shared NOTES update payload */
+export interface SessionNotesPayload {
+  session_id: string;
+  meeting_id: string | null;
+  content: string;
+  updated_by: string | null;
+  updated_at: string;
+}
+
 /** POST /api/sessions/:id/sections のリクエストボディ */
 export interface CreateSectionRequest {
   title: string;
@@ -346,6 +356,22 @@ export interface SectionResponse {
   description: string;
   before_sequence_id: number;
   created_at: string;
+}
+
+/** GET/PUT /api/sessions/:id/notes response */
+export interface SessionNotesResponse {
+  session_id: string;
+  meeting_id: string | null;
+  content: string;
+  updated_by: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+/** PUT /api/sessions/:id/notes request */
+export interface UpdateSessionNotesRequest {
+  content: string;
+  authorName?: string;
 }
 
 // =============================================================================

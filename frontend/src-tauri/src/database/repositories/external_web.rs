@@ -15,8 +15,9 @@ use tracing::info;
 use uuid::Uuid;
 
 use crate::database::models::{
-    ExternalRecordingSession, ExternalTranscriptComment, ExternalTranscriptHighlight,
-    ExternalTranscriptRevision, ExternalTranscriptSection, ExternalTranscriptSegment,
+    ExternalRecordingSession, ExternalSessionNote, ExternalTranscriptComment,
+    ExternalTranscriptHighlight, ExternalTranscriptRevision, ExternalTranscriptSection,
+    ExternalTranscriptSegment,
 };
 
 /// External Web UI 用の DB 操作をまとめたリポジトリ構造体。
@@ -119,6 +120,18 @@ impl ExternalWebRepository {
         // 同セッションに属する全 sections にも meeting_id を伝播
         sqlx::query(
             "UPDATE external_transcript_sections
+             SET meeting_id = ?, updated_at = ?
+             WHERE session_id = ?",
+        )
+        .bind(meeting_id)
+        .bind(&now)
+        .bind(session_id)
+        .execute(&mut *tx)
+        .await?;
+
+        // 同セッションに属する NOTES にも meeting_id を伝播
+        sqlx::query(
+            "UPDATE external_session_notes
              SET meeting_id = ?, updated_at = ?
              WHERE session_id = ?",
         )
@@ -737,5 +750,74 @@ impl ExternalWebRepository {
         .await?;
 
         Ok(section)
+    }
+
+    // =========================================================================
+    // NOTES 操作
+    // =========================================================================
+
+    /// セッションに紐づく共有 NOTES を取得する。
+    pub async fn get_note_by_session(
+        pool: &SqlitePool,
+        session_id: &str,
+    ) -> Result<Option<ExternalSessionNote>, SqlxError> {
+        let note = sqlx::query_as::<_, ExternalSessionNote>(
+            "SELECT session_id, meeting_id, content, updated_by, created_at, updated_at
+             FROM external_session_notes
+             WHERE session_id = ?",
+        )
+        .bind(session_id)
+        .fetch_optional(pool)
+        .await?;
+
+        Ok(note)
+    }
+
+    /// セッションに紐づく共有 NOTES を upsert する。
+    pub async fn upsert_note(
+        pool: &SqlitePool,
+        session_id: &str,
+        content: &str,
+        updated_by: Option<&str>,
+    ) -> Result<ExternalSessionNote, SqlxError> {
+        let now = chrono::Utc::now().to_rfc3339();
+        let meeting_id: Option<String> = sqlx::query_scalar(
+            "SELECT meeting_id FROM external_recording_sessions WHERE id = ?",
+        )
+        .bind(session_id)
+        .fetch_optional(pool)
+        .await?
+        .flatten();
+
+        sqlx::query(
+            "INSERT INTO external_session_notes
+                (session_id, meeting_id, content, updated_by, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?)
+             ON CONFLICT(session_id) DO UPDATE SET
+                meeting_id = excluded.meeting_id,
+                content = excluded.content,
+                updated_by = excluded.updated_by,
+                updated_at = excluded.updated_at",
+        )
+        .bind(session_id)
+        .bind(&meeting_id)
+        .bind(content)
+        .bind(updated_by)
+        .bind(&now)
+        .bind(&now)
+        .execute(pool)
+        .await?;
+
+        let note = sqlx::query_as::<_, ExternalSessionNote>(
+            "SELECT session_id, meeting_id, content, updated_by, created_at, updated_at
+             FROM external_session_notes
+             WHERE session_id = ?",
+        )
+        .bind(session_id)
+        .fetch_one(pool)
+        .await?;
+
+        info!("Updated shared note for session {}", session_id);
+        Ok(note)
     }
 }

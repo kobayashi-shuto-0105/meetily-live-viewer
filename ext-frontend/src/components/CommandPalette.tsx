@@ -121,19 +121,29 @@ export function CommandPalette({
       : query.slice(1).trim().toLowerCase();
 
     if (mode === "sections") {
-      return buildSectionItems(sections, sortedSegments, searchText, onScrollToSegment, onClose);
+      return buildSectionItems(sections, searchText);
     }
     if (mode === "history") {
       return buildHistoryItemsFromData(historyItems, searchText, onLoadSession, onClose);
     }
     // settings
     return buildSettingsItems(searchText, currentTheme, onChangeTheme, onClose);
-  }, [mode, query, sections, sortedSegments, historyItems, onLoadSession, onScrollToSegment, onClose, currentTheme, onChangeTheme]);
+  }, [mode, query, sections, historyItems, onLoadSession, onClose, currentTheme, onChangeTheme]);
+
+  useEffect(() => {
+    setFocusIndex(0);
+  }, [mode, query]);
 
   const currentFocusIndex = useMemo(() => {
     if (items.length === 0) return 0;
     return Math.min(focusIndex, items.length - 1);
   }, [focusIndex, items.length]);
+
+  const focusedSection = mode === "sections" ? items[currentFocusIndex]?.section : undefined;
+  const focusedSectionSegments = useMemo(() => {
+    if (!focusedSection) return [];
+    return getSegmentsInSection(focusedSection, sections, sortedSegments);
+  }, [focusedSection, sections, sortedSegments]);
 
   // Ensure focused item is visible in list
   useEffect(() => {
@@ -187,8 +197,17 @@ export function CommandPalette({
         setFocusIndex((i) => Math.max(i - 1, 0));
         return;
       }
-      // Ctrl+F → scroll preview right (no-op for now, visual focus)
-      // Ctrl+B → scroll preview left (no-op for now)
+      // Ctrl+F / Ctrl+B: move section focus forward/backward while keeping the palette open.
+      if (mode === "sections" && e.ctrlKey && !e.metaKey && !e.altKey && e.key.toLowerCase() === "f") {
+        e.preventDefault();
+        setFocusIndex((i) => Math.min(i + 1, items.length - 1));
+        return;
+      }
+      if (mode === "sections" && e.ctrlKey && !e.metaKey && !e.altKey && e.key.toLowerCase() === "b") {
+        e.preventDefault();
+        setFocusIndex((i) => Math.max(i - 1, 0));
+        return;
+      }
 
       // Enter → execute focused item
       if (e.key === "Enter") {
@@ -204,7 +223,7 @@ export function CommandPalette({
         return;
       }
     },
-    [items, currentFocusIndex, executeItem, onClose]
+    [items, currentFocusIndex, executeItem, onClose, mode]
   );
 
   useEffect(() => {
@@ -221,9 +240,9 @@ export function CommandPalette({
       className="command-palette command-palette-attached"
       role="dialog"
       aria-modal="true"
-      aria-label="コマンドパレット"
+      aria-label="Command palette"
     >
-      <div className="command-palette-list" ref={listRef} role="listbox" aria-label="コマンド候補一覧">
+      <div className="command-palette-list" ref={listRef} role="listbox" aria-label="Command suggestions">
         {items.length === 0 ? (
           <div className="command-palette-empty">
             {mode === "sections" && "No sections found"}
@@ -264,6 +283,16 @@ export function CommandPalette({
           </>
         )}
       </div>
+      {mode === "sections" && (
+        <SectionFocusPreview
+          section={focusedSection}
+          segments={focusedSectionSegments}
+          onScrollToSegment={(segmentId) => {
+            onScrollToSegment(segmentId);
+            onClose();
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -274,10 +303,7 @@ export function CommandPalette({
 
 function buildSectionItems(
   sections: Section[],
-  sortedSegments: TranscriptSegmentView[],
-  search: string,
-  onScrollToSegment: (segmentId: string) => void,
-  onClose: () => void
+  search: string
 ): PaletteItem[] {
   const sorted = [...sections].sort((a, b) => a.beforeSequenceId - b.beforeSequenceId);
 
@@ -289,59 +315,6 @@ function buildSectionItems(
     );
   });
 
-  // If exactly one section matches (or search targets one section), show its annotations
-  if (filtered.length === 1) {
-    const section = filtered[0];
-    const sectionIdx = sorted.indexOf(section);
-    const nextSection = sorted[sectionIdx + 1];
-
-    // Find segments belonging to this section
-    const sectionSegments = sortedSegments.filter((seg) => {
-      if (seg.sequenceId < section.beforeSequenceId) return false;
-      if (nextSection && seg.sequenceId >= nextSection.beforeSequenceId) return false;
-      return true;
-    });
-
-    const items: PaletteItem[] = [
-      {
-        id: section.id,
-        label: `§ ${section.title}`,
-        description: section.description || undefined,
-        section,
-      },
-    ];
-
-    // Add comments from segments in this section
-    for (const seg of sectionSegments) {
-      for (const comment of seg.comments) {
-        items.push({
-          id: `comment-${comment.id}`,
-          label: `💬 ${comment.comment_text}`,
-          description: comment.author_name ? `by ${comment.author_name}` : seg.displayText.slice(0, 40),
-          action: () => {
-            onScrollToSegment(seg.id);
-            onClose();
-          },
-        });
-      }
-      for (const hl of seg.highlights) {
-        const colorLabel = hl.color === "todo" ? "📌 TODO" : hl.color === "fixme" ? "🔴 FIXME" : `🖍 ${hl.color}`;
-        items.push({
-          id: `highlight-${hl.id}`,
-          label: `${colorLabel}${hl.note ? `: ${hl.note}` : ""}`,
-          description: seg.displayText.slice(0, 50),
-          action: () => {
-            onScrollToSegment(seg.id);
-            onClose();
-          },
-        });
-      }
-    }
-
-    return items;
-  }
-
-  // Default: list all matching sections
   return filtered.map((s, idx) => ({
     id: s.id,
     label: `${idx + 1}. ${s.title}`,
@@ -350,17 +323,102 @@ function buildSectionItems(
   }));
 }
 
+function getSegmentsInSection(
+  section: Section,
+  sections: Section[],
+  sortedSegments: TranscriptSegmentView[]
+): TranscriptSegmentView[] {
+  const sorted = [...sections].sort((a, b) => a.beforeSequenceId - b.beforeSequenceId);
+  const sectionIdx = sorted.findIndex((s) => s.id === section.id);
+  const nextSection = sectionIdx >= 0 ? sorted[sectionIdx + 1] : undefined;
+
+  return sortedSegments.filter((seg) => {
+    if (seg.sequenceId < section.beforeSequenceId) return false;
+    if (nextSection && seg.sequenceId >= nextSection.beforeSequenceId) return false;
+    return true;
+  });
+}
+
+function SectionFocusPreview({
+  section,
+  segments,
+  onScrollToSegment,
+}: {
+  section?: Section;
+  segments: TranscriptSegmentView[];
+  onScrollToSegment: (segmentId: string) => void;
+}) {
+  if (!section) {
+    return (
+      <aside className="command-section-preview">
+        <div className="command-section-preview-empty">Focus a section to inspect its notes.</div>
+      </aside>
+    );
+  }
+
+  const annotationItems = segments.flatMap((seg) => {
+    const comments = seg.comments.map((comment) => ({
+      id: `comment-${comment.id}`,
+      tone: "comment",
+      label: comment.comment_text,
+      meta: comment.author_name ? `Comment by ${comment.author_name}` : "Comment",
+      segmentId: seg.id,
+      excerpt: seg.displayText,
+    }));
+    const highlights = seg.highlights.map((highlight) => ({
+      id: `highlight-${highlight.id}`,
+      tone: highlight.color,
+      label: highlight.note || (highlight.color === "todo" ? "TODO" : highlight.color === "fixme" ? "FIXME" : "Highlight"),
+      meta: "Highlight",
+      segmentId: seg.id,
+      excerpt: seg.displayText,
+    }));
+    return [...comments, ...highlights];
+  });
+
+  return (
+    <aside className="command-section-preview" aria-label="Focused section details">
+      <div className="command-section-preview-head">
+        <span>Focused section</span>
+        <strong>{section.title}</strong>
+        {section.description && <p>{section.description}</p>}
+      </div>
+      <div className="command-section-preview-list">
+        {annotationItems.length === 0 ? (
+          <div className="command-section-preview-empty">
+            No comments or highlights in this section yet.
+          </div>
+        ) : (
+          annotationItems.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              className={`command-section-preview-card is-${item.tone}`}
+              onClick={() => onScrollToSegment(item.segmentId)}
+            >
+              <span>{item.meta}</span>
+              <strong>{item.label}</strong>
+              <small>{item.excerpt}</small>
+            </button>
+          ))
+        )}
+      </div>
+      <div className="command-section-preview-footer">Ctrl+F / Ctrl+B moves section focus</div>
+    </aside>
+  );
+}
+
 function buildHistoryItemsFromData(
   sessions: SessionHistoryItem[],
   search: string,
   onLoadSession: (sessionId: string, meetingTitle: string | null, startedAt: string) => void,
   onClose: () => void
 ): PaletteItem[] {
+  const tokens = search.split(/\s+/).filter(Boolean);
   const filtered = sessions.filter((s) => {
     if (!search) return true;
-    const title = (s.meeting_title ?? "").toLowerCase();
-    const date = s.started_at.toLowerCase();
-    return title.includes(search) || date.includes(search);
+    const haystack = buildHistorySearchText(s);
+    return tokens.every((token) => haystack.includes(token));
   });
 
   return filtered.map((s) => {
@@ -386,14 +444,39 @@ function formatSessionDate(isoString: string): string {
     const year = d.getFullYear();
     const month = d.getMonth() + 1;
     const day = d.getDate();
-    const hours = d.getHours().toString().padStart(2, "0");
+    const weekday = new Intl.DateTimeFormat("en-US", { weekday: "short" }).format(d);
+    const hours24 = d.getHours();
+    const period = hours24 < 12 ? "a.m." : "p.m.";
+    const hours12 = hours24 % 12 || 12;
     const minutes = d.getMinutes().toString().padStart(2, "0");
     // Include year if different from current year
     const yearStr = year !== now.getFullYear() ? `${year}/` : "";
-    return `${yearStr}${month}/${day} ${hours}:${minutes}`;
+    return `${weekday} ${yearStr}${month}/${day} ${hours12}:${minutes} ${period}`;
   } catch {
     return isoString;
   }
+}
+
+function buildHistorySearchText(session: SessionHistoryItem): string {
+  const title = session.meeting_title ?? "Untitled Meeting";
+  const formatted = formatSessionDate(session.started_at);
+  const raw = session.started_at;
+  let expanded = "";
+
+  try {
+    const d = new Date(session.started_at);
+    expanded = [
+      new Intl.DateTimeFormat("en-US", { weekday: "short" }).format(d),
+      new Intl.DateTimeFormat("en-US", { weekday: "long" }).format(d),
+      `${d.getMonth() + 1}/${d.getDate()}`,
+      `${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getDate()).padStart(2, "0")}`,
+      String(d.getFullYear()),
+    ].join(" ");
+  } catch {
+    expanded = "";
+  }
+
+  return `${title} ${formatted} ${raw} ${expanded}`.toLowerCase();
 }
 
 function buildSettingsItems(
