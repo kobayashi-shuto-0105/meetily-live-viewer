@@ -27,6 +27,12 @@ interface AnnotationItem {
   excerpt: string;
 }
 
+interface FlowItem<T> {
+  item: T;
+  originalIndex: number;
+  flowIndex: number;
+}
+
 // ----------------------------------------------------------------
 // CommandPalette
 // ----------------------------------------------------------------
@@ -170,14 +176,15 @@ export function CommandPalette({
     setAnnotationFocusIndex(0);
   }, [mode, query, focusedSection?.id]);
 
-  // Ensure focused item is visible in list
-  useEffect(() => {
-    if (!listRef.current) return;
-    const focused = listRef.current.querySelector('[data-focused="true"]');
-    if (focused) {
-      focused.scrollIntoView({ block: "nearest" });
-    }
-  }, [currentFocusIndex]);
+  const flowItems = useMemo(
+    () => buildFlowItems(items, currentFocusIndex, mode === "history" ? 10 : 7),
+    [items, currentFocusIndex, mode]
+  );
+
+  const annotationFlowItems = useMemo(
+    () => buildFlowItems(annotationItems, currentAnnotationFocusIndex, 5),
+    [annotationItems, currentAnnotationFocusIndex]
+  );
 
   const executeItem = useCallback(
     (item: PaletteItem) => {
@@ -196,9 +203,11 @@ export function CommandPalette({
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
+      const key = e.key.toLowerCase();
       if (items.length === 0) {
-        if (e.key === "Escape") {
+        if (key === "escape") {
           e.preventDefault();
+          e.stopPropagation();
           onClose();
         }
         return;
@@ -206,10 +215,11 @@ export function CommandPalette({
 
       // Ctrl+N or Down → next item
       if (
-        e.key === "ArrowDown" ||
-        (e.ctrlKey && e.key === "n")
+        key === "arrowdown" ||
+        (e.ctrlKey && key === "n")
       ) {
         e.preventDefault();
+        e.stopPropagation();
         if (focusPane === "annotations" && annotationItems.length > 0) {
           setAnnotationFocusIndex((i) => Math.min(i + 1, annotationItems.length - 1));
         } else {
@@ -219,10 +229,11 @@ export function CommandPalette({
       }
       // Ctrl+P or Up → prev item
       if (
-        e.key === "ArrowUp" ||
-        (e.ctrlKey && e.key === "p")
+        key === "arrowup" ||
+        (e.ctrlKey && key === "p")
       ) {
         e.preventDefault();
+        e.stopPropagation();
         if (focusPane === "annotations" && annotationItems.length > 0) {
           setAnnotationFocusIndex((i) => Math.max(i - 1, 0));
         } else {
@@ -231,8 +242,9 @@ export function CommandPalette({
         return;
       }
       // Ctrl+F / Ctrl+B: move between the section list and its annotation side column.
-      if (mode === "sections" && e.ctrlKey && !e.metaKey && !e.altKey && e.key.toLowerCase() === "f") {
+      if (mode === "sections" && e.ctrlKey && !e.metaKey && !e.altKey && key === "f") {
         e.preventDefault();
+        e.stopPropagation();
         if (focusPane === "sections") {
           if (annotationItems.length > 0) {
             setFocusPane("annotations");
@@ -245,8 +257,9 @@ export function CommandPalette({
         }
         return;
       }
-      if (mode === "sections" && e.ctrlKey && !e.metaKey && !e.altKey && e.key.toLowerCase() === "b") {
+      if (mode === "sections" && e.ctrlKey && !e.metaKey && !e.altKey && key === "b") {
         e.preventDefault();
+        e.stopPropagation();
         if (focusPane === "annotations") {
           if (currentAnnotationFocusIndex > 0) {
             setAnnotationFocusIndex((i) => Math.max(i - 1, 0));
@@ -260,8 +273,9 @@ export function CommandPalette({
       }
 
       // Enter → execute focused item
-      if (e.key === "Enter") {
+      if (key === "enter") {
         e.preventDefault();
+        e.stopPropagation();
         if (focusPane === "annotations") {
           const annotation = annotationItems[currentAnnotationFocusIndex];
           if (annotation) {
@@ -275,8 +289,9 @@ export function CommandPalette({
         return;
       }
       // Escape → close
-      if (e.key === "Escape") {
+      if (key === "escape") {
         e.preventDefault();
+        e.stopPropagation();
         onClose();
         return;
       }
@@ -297,8 +312,8 @@ export function CommandPalette({
   useEffect(() => {
     if (!visible) return;
     const onKeyDown = (e: KeyboardEvent) => handleKeyDown(e);
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
+    document.addEventListener("keydown", onKeyDown, true);
+    return () => document.removeEventListener("keydown", onKeyDown, true);
   }, [visible, handleKeyDown]);
 
   if (!visible) return null;
@@ -319,22 +334,23 @@ export function CommandPalette({
           </div>
         ) : (
           <>
-            {items.map((item, idx) => (
+            {flowItems.map(({ item, originalIndex, flowIndex }) => (
               <button
                 key={item.id}
                 type="button"
-                className={`command-palette-item${idx === currentFocusIndex ? " is-focused" : ""}${idx === currentFocusIndex && focusPane === "sections" ? " is-keyboard-pane" : ""}`}
-                data-focused={idx === currentFocusIndex}
+                className={`command-palette-item${flowIndex === 0 ? " is-focused" : ""}${flowIndex === 0 && focusPane === "sections" ? " is-keyboard-pane" : ""}`}
+                data-focused={flowIndex === 0}
+                data-flow-index={flowIndex}
                 role="option"
-                aria-selected={idx === currentFocusIndex}
+                aria-selected={flowIndex === 0}
                 onClick={() => executeItem(item)}
                 onMouseEnter={() => {
                   setFocusPane("sections");
-                  setFocusIndex(idx);
+                  setFocusIndex(originalIndex);
                 }}
                 onFocus={() => {
                   setFocusPane("sections");
-                  setFocusIndex(idx);
+                  setFocusIndex(originalIndex);
                 }}
               >
                 <span className="command-palette-item-label">{item.label}</span>
@@ -361,7 +377,7 @@ export function CommandPalette({
         <SectionFocusPreview
           section={focusedSection}
           annotationItems={annotationItems}
-          focusedIndex={currentAnnotationFocusIndex}
+          flowItems={annotationFlowItems}
           isPaneFocused={focusPane === "annotations"}
           onFocusAnnotation={(idx) => {
             setFocusPane("annotations");
@@ -419,6 +435,19 @@ function getSegmentsInSection(
   });
 }
 
+function buildFlowItems<T>(items: T[], focusIndex: number, maxItems: number): FlowItem<T>[] {
+  if (items.length === 0) return [];
+
+  const clampedFocus = Math.min(Math.max(focusIndex, 0), items.length - 1);
+  return items
+    .slice(clampedFocus, clampedFocus + maxItems)
+    .map((item, idx) => ({
+      item,
+      originalIndex: clampedFocus + idx,
+      flowIndex: idx,
+    }));
+}
+
 function buildAnnotationItems(segments: TranscriptSegmentView[]): AnnotationItem[] {
   return segments.flatMap((seg) => {
     const comments = seg.comments.map((comment) => ({
@@ -444,14 +473,14 @@ function buildAnnotationItems(segments: TranscriptSegmentView[]): AnnotationItem
 function SectionFocusPreview({
   section,
   annotationItems,
-  focusedIndex,
+  flowItems,
   isPaneFocused,
   onFocusAnnotation,
   onScrollToSegment,
 }: {
   section?: Section;
   annotationItems: AnnotationItem[];
-  focusedIndex: number;
+  flowItems: FlowItem<AnnotationItem>[];
   isPaneFocused: boolean;
   onFocusAnnotation: (idx: number) => void;
   onScrollToSegment: (segmentId: string) => void;
@@ -477,14 +506,15 @@ function SectionFocusPreview({
             No comments or highlights in this section yet.
           </div>
         ) : (
-          annotationItems.map((item, idx) => (
+          flowItems.map(({ item, originalIndex, flowIndex }) => (
             <button
               key={item.id}
               type="button"
-              className={`command-section-preview-card is-${item.tone}${isPaneFocused && idx === focusedIndex ? " is-focused" : ""}`}
-              data-focused={isPaneFocused && idx === focusedIndex}
-              onMouseEnter={() => onFocusAnnotation(idx)}
-              onFocus={() => onFocusAnnotation(idx)}
+              className={`command-section-preview-card is-${item.tone}${isPaneFocused && flowIndex === 0 ? " is-focused" : ""}`}
+              data-focused={isPaneFocused && flowIndex === 0}
+              data-flow-index={flowIndex}
+              onMouseEnter={() => onFocusAnnotation(originalIndex)}
+              onFocus={() => onFocusAnnotation(originalIndex)}
               onClick={() => onScrollToSegment(item.segmentId)}
             >
               <span>{item.meta}</span>
