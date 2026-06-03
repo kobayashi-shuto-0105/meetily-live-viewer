@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties } from "react";
 import { useTranscriptStore } from "../stores/transcriptStore";
 import { apiClient } from "../api/client";
 import type { Section, SessionHistoryItem, TranscriptSegmentView } from "../types";
@@ -32,6 +33,8 @@ interface FlowItem<T> {
   originalIndex: number;
   flowIndex: number;
 }
+
+const COMMAND_ITEM_STEP_PX = 62;
 
 // ----------------------------------------------------------------
 // CommandPalette
@@ -180,6 +183,7 @@ export function CommandPalette({
     () => buildFlowItems(annotationItems, currentAnnotationFocusIndex, 5),
     [annotationItems, currentAnnotationFocusIndex]
   );
+  const annotationAnchorOffset = mode === "sections" ? currentFocusIndex * COMMAND_ITEM_STEP_PX : 0;
 
   // Keep the section/history/settings list in the previous moving-focus behavior.
   useEffect(() => {
@@ -265,11 +269,7 @@ export function CommandPalette({
         e.preventDefault();
         e.stopPropagation();
         if (focusPane === "annotations") {
-          if (currentAnnotationFocusIndex > 0) {
-            setAnnotationFocusIndex((i) => Math.max(i - 1, 0));
-          } else {
-            setFocusPane("sections");
-          }
+          setFocusPane("sections");
         } else {
           setFocusIndex((i) => Math.max(i - 1, 0));
         }
@@ -381,6 +381,7 @@ export function CommandPalette({
           section={focusedSection}
           annotationItems={annotationItems}
           flowItems={annotationFlowItems}
+          anchorOffset={annotationAnchorOffset}
           isPaneFocused={focusPane === "annotations"}
           onFocusAnnotation={(idx) => {
             setFocusPane("annotations");
@@ -490,6 +491,7 @@ function SectionFocusPreview({
   section,
   annotationItems,
   flowItems,
+  anchorOffset,
   isPaneFocused,
   onFocusAnnotation,
   onScrollToSegment,
@@ -497,6 +499,7 @@ function SectionFocusPreview({
   section?: Section;
   annotationItems: AnnotationItem[];
   flowItems: FlowItem<AnnotationItem>[];
+  anchorOffset: number;
   isPaneFocused: boolean;
   onFocusAnnotation: (idx: number) => void;
   onScrollToSegment: (segmentId: string) => void;
@@ -509,8 +512,16 @@ function SectionFocusPreview({
     );
   }
 
+  const style = {
+    "--annotation-anchor-offset": `${anchorOffset}px`,
+  } as CSSProperties;
+
   return (
-    <aside className={`command-section-preview${isPaneFocused ? " is-pane-focused" : ""}`} aria-label={`${section.title} annotations`}>
+    <aside
+      className={`command-section-preview${isPaneFocused ? " is-pane-focused" : ""}`}
+      aria-label={`${section.title} annotations`}
+      style={style}
+    >
       <div className="command-section-preview-list">
         {annotationItems.length === 0 ? (
           <div className="command-section-preview-empty">
