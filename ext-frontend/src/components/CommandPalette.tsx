@@ -176,15 +176,19 @@ export function CommandPalette({
     setAnnotationFocusIndex(0);
   }, [mode, query, focusedSection?.id]);
 
-  const flowItems = useMemo(
-    () => buildFlowItems(items, currentFocusIndex, mode === "history" ? 10 : 7),
-    [items, currentFocusIndex, mode]
-  );
-
   const annotationFlowItems = useMemo(
     () => buildFlowItems(annotationItems, currentAnnotationFocusIndex, 5),
     [annotationItems, currentAnnotationFocusIndex]
   );
+
+  // Keep the section/history/settings list in the previous moving-focus behavior.
+  useEffect(() => {
+    if (!listRef.current || focusPane !== "sections") return;
+    const focused = listRef.current.querySelector('[data-focused="true"]');
+    if (focused) {
+      focused.scrollIntoView({ block: "nearest" });
+    }
+  }, [currentFocusIndex, focusPane]);
 
   const executeItem = useCallback(
     (item: PaletteItem) => {
@@ -334,23 +338,22 @@ export function CommandPalette({
           </div>
         ) : (
           <>
-            {flowItems.map(({ item, originalIndex, flowIndex }) => (
+            {items.map((item, idx) => (
               <button
                 key={item.id}
                 type="button"
-                className={`command-palette-item${flowIndex === 0 ? " is-focused" : ""}${flowIndex === 0 && focusPane === "sections" ? " is-keyboard-pane" : ""}`}
-                data-focused={flowIndex === 0}
-                data-flow-index={flowIndex}
+                className={`command-palette-item${idx === currentFocusIndex ? " is-focused" : ""}${idx === currentFocusIndex && focusPane === "sections" ? " is-keyboard-pane" : ""}`}
+                data-focused={idx === currentFocusIndex}
                 role="option"
-                aria-selected={flowIndex === 0}
+                aria-selected={idx === currentFocusIndex}
                 onClick={() => executeItem(item)}
                 onMouseEnter={() => {
                   setFocusPane("sections");
-                  setFocusIndex(originalIndex);
+                  setFocusIndex(idx);
                 }}
                 onFocus={() => {
                   setFocusPane("sections");
-                  setFocusIndex(originalIndex);
+                  setFocusIndex(idx);
                 }}
               >
                 <span className="command-palette-item-label">{item.label}</span>

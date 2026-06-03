@@ -74,6 +74,28 @@ function createDevMockSegments(): TranscriptSegmentResponse[] {
           anchor_revision_id: null,
           created_at: new Date().toISOString(),
         },
+        {
+          id: "mock-comment-2",
+          external_segment_id: "mock-segment-2",
+          comment_text: "Confirm whether this line should be kept in the final notes.",
+          author_name: "Alex K.",
+          anchor_start: null,
+          anchor_end: null,
+          anchor_revision_id: null,
+          created_at: new Date().toISOString(),
+        },
+      ],
+      highlights: [
+        {
+          id: "mock-highlight-2",
+          external_segment_id: "mock-segment-2",
+          color: "fixme",
+          note: "Needs rewrite",
+          anchor_start: null,
+          anchor_end: null,
+          anchor_revision_id: null,
+          created_at: new Date().toISOString(),
+        },
       ],
     },
     {
