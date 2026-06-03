@@ -28,6 +28,7 @@ import type {
   CreateSectionRequest,
   UpdateSectionRequest,
   SectionResponse,
+  SessionHistoryResponse,
 } from "../types";
 import { getRuntimeAccessToken } from "./runtime";
 
@@ -151,6 +152,19 @@ export class ApiClient {
   async getCurrentSession(): Promise<CurrentSessionResponse | null> {
     return this.request<CurrentSessionResponse | null>(
       "/api/sessions/current"
+    );
+  }
+
+  /**
+   * セッション履歴を新しい順で取得する。
+   * limit で最大件数（デフォルト 15）、offset でページネーションを制御する。
+   */
+  async getSessionHistory(
+    limit: number = 15,
+    offset: number = 0
+  ): Promise<SessionHistoryResponse> {
+    return this.request<SessionHistoryResponse>(
+      `/api/sessions/history?limit=${limit}&offset=${offset}`
     );
   }
 

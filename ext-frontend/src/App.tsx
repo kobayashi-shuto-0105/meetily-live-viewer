@@ -1,9 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { RefObject } from "react";
 import { createWebSocketClient } from "./api/ws";
 import type { WebSocketClient } from "./api/ws";
 import { apiClient } from "./api/client";
 import { useTranscriptStore } from "./stores/transcriptStore";
 import { TranscriptViewer } from "./components/TranscriptViewer";
+import type { TranscriptViewerHandle } from "./components/TranscriptViewer";
+import { CommandPalette } from "./components/CommandPalette";
+import { NotePanel } from "./components/NotePanel";
 import { OnboardingModal } from "./components/OnboardingModal";
 import { loadAuthorName } from "./stores/authorName";
 import type { TranscriptSegmentResponse } from "./types";
@@ -104,10 +108,13 @@ function createDevMockSegments(): TranscriptSegmentResponse[] {
 // ----------------------------------------------------------------
 
 function App() {
-  const [theme] = useState<Theme>(loadTheme);
+  const [theme, setTheme] = useState<Theme>(loadTheme);
   const [showOnboarding, setShowOnboarding] = useState(() => loadAuthorName() === null);
 
   const wsRef = useRef<WebSocketClient | null>(null);
+  const viewerRef = useRef<TranscriptViewerHandle>(null);
+  const commandShellRef = useRef<HTMLDivElement>(null);
+  const commandInputRef = useRef<HTMLInputElement>(null);
 
   const {
     setConnectionStatus,
@@ -255,7 +262,9 @@ function App() {
   const title = session?.meetingTitle?.trim() ?? "";
 
   // ---- Command bar visibility (⌘P or top-center hover) ----
-  const [cmdBarVisible, setCmdBarVisible] = useState(false);
+  const [cmdBarHintVisible, setCmdBarHintVisible] = useState(false);
+  const [isPaletteOpen, setIsPaletteOpen] = useState(false);
+  const [commandQuery, setCommandQuery] = useState("");
   const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const showBar = useCallback(() => {
@@ -263,30 +272,108 @@ function App() {
       clearTimeout(hideTimerRef.current);
       hideTimerRef.current = null;
     }
-    setCmdBarVisible(true);
+    setCmdBarHintVisible(true);
   }, []);
 
   const scheduleHide = useCallback(() => {
-    hideTimerRef.current = setTimeout(() => setCmdBarVisible(false), 320);
+    hideTimerRef.current = setTimeout(() => setCmdBarHintVisible(false), 90);
+  }, []);
+
+  const closeCommandBar = useCallback(() => {
+    if (hideTimerRef.current) {
+      clearTimeout(hideTimerRef.current);
+      hideTimerRef.current = null;
+    }
+    setIsPaletteOpen(false);
+    setCommandQuery("");
+    setCmdBarHintVisible(false);
+    commandInputRef.current?.blur();
   }, []);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === "p") {
+      const target = e.target as HTMLElement | null;
+      const isTypingTarget =
+        !!target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.isContentEditable);
+
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === "p") {
         e.preventDefault();
         if (hideTimerRef.current) {
           clearTimeout(hideTimerRef.current);
           hideTimerRef.current = null;
         }
-        setCmdBarVisible((v) => !v);
+        setCmdBarHintVisible(true);
+        setIsPaletteOpen(true);
+        requestAnimationFrame(() => {
+          commandInputRef.current?.focus();
+          commandInputRef.current?.select();
+        });
       }
       if (e.key === "Escape") {
-        setCmdBarVisible(false);
+        closeCommandBar();
+      }
+      // Shift+↑: Jump to previous section
+      if (!isTypingTarget && e.shiftKey && e.key === "ArrowUp" && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        e.preventDefault();
+        viewerRef.current?.jumpSectionUp();
+      }
+      // Shift+↓: Jump to next section
+      if (!isTypingTarget && e.shiftKey && e.key === "ArrowDown" && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        e.preventDefault();
+        viewerRef.current?.jumpSectionDown();
       }
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
+  }, [closeCommandBar]);
+
+  useEffect(() => {
+    if (!isPaletteOpen) return;
+    const handleOutsideClick = (e: MouseEvent) => {
+      const target = e.target as Node | null;
+      if (!target) return;
+      if (commandShellRef.current?.contains(target)) return;
+      closeCommandBar();
+    };
+    document.addEventListener("mousedown", handleOutsideClick);
+    return () => document.removeEventListener("mousedown", handleOutsideClick);
+  }, [isPaletteOpen, closeCommandBar]);
+
+  const handleChangeTheme = useCallback((newTheme: "dark" | "light") => {
+    setTheme(newTheme);
   }, []);
+
+  // Load a past session from history into the viewer
+  const handleLoadSession = useCallback(
+    async (sessionId: string, meetingTitle: string | null, startedAt: string) => {
+      try {
+        restoreSession(sessionId, meetingTitle, startedAt);
+        const segments = await apiClient.getSessionTranscripts(sessionId);
+        loadSegments(segments);
+
+        try {
+          const sections = await apiClient.getSessionSections(sessionId);
+          loadSections(
+            sections.map((s) => ({
+              id: s.id,
+              title: s.title,
+              description: s.description,
+              beforeSequenceId: s.before_sequence_id,
+              createdAt: s.created_at,
+            }))
+          );
+        } catch (e) {
+          console.warn("[handleLoadSession] Failed to load sections:", e);
+        }
+      } catch (e) {
+        console.warn("[handleLoadSession] Failed to load session:", e);
+      }
+    },
+    [restoreSession, loadSegments, loadSections]
+  );
 
   return (
     <div className="meetily-app">
@@ -296,6 +383,7 @@ function App() {
       {/* Invisible hover trigger at top-center */}
       <div
         className="cmd-hotzone"
+        style={{ pointerEvents: cmdBarHintVisible || isPaletteOpen ? "none" : "auto" }}
         onMouseEnter={showBar}
         onMouseLeave={scheduleHide}
       />
@@ -316,15 +404,44 @@ function App() {
           </div>
 
           {title && <h1 className="meeting-title">{title}</h1>}
-          <CommandBar
-            visible={cmdBarVisible}
-            onMouseEnter={showBar}
-            onMouseLeave={scheduleHide}
-          />
+          <div className="command-shell" ref={commandShellRef}>
+            <CommandBarTrigger
+              visible={cmdBarHintVisible || isPaletteOpen}
+              onMouseEnter={showBar}
+              onMouseLeave={scheduleHide}
+              query={commandQuery}
+              onQueryChange={(value) => {
+                setCommandQuery(value);
+                if (!isPaletteOpen) setIsPaletteOpen(true);
+              }}
+              onFocusInput={() => {
+                setCmdBarHintVisible(true);
+                setIsPaletteOpen(true);
+                requestAnimationFrame(() => commandInputRef.current?.focus());
+              }}
+              onEscape={closeCommandBar}
+              inputRef={commandInputRef}
+            />
+            {isPaletteOpen && (
+              <CommandPalette
+                visible={isPaletteOpen}
+                query={commandQuery}
+                onClose={closeCommandBar}
+                onScrollToSection={(beforeSeqId) => viewerRef.current?.scrollToSection(beforeSeqId)}
+                onScrollToSegment={(segId) => viewerRef.current?.scrollToSegment(segId)}
+                onLoadSession={handleLoadSession}
+                onChangeTheme={handleChangeTheme}
+                currentTheme={theme}
+              />
+            )}
+          </div>
           <ConnectionBadge />
         </header>
 
-        <TranscriptViewer />
+        <div className="app-main">
+          <NotePanel />
+          <TranscriptViewer ref={viewerRef} />
+        </div>
       </div>
     </div>
   );
@@ -334,31 +451,74 @@ function App() {
 // Sub-components
 // ----------------------------------------------------------------
 
-function CommandBar({
+const PLACEHOLDER_HINTS = [
+  "Search sections…",
+  "# Browse history",
+  "> Run command",
+] as const;
+
+function CommandBarTrigger({
   visible,
   onMouseEnter,
   onMouseLeave,
+  query,
+  onQueryChange,
+  onFocusInput,
+  onEscape,
+  inputRef,
 }: {
   visible: boolean;
   onMouseEnter: () => void;
   onMouseLeave: () => void;
+  query: string;
+  onQueryChange: (value: string) => void;
+  onFocusInput: () => void;
+  onEscape: () => void;
+  inputRef: RefObject<HTMLInputElement | null>;
 }) {
+  const [hintIndex, setHintIndex] = useState(0);
+
+  // Rotate placeholder hints every 3 seconds
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setHintIndex((i) => (i + 1) % PLACEHOLDER_HINTS.length);
+    }, 3000);
+    return () => clearInterval(interval);
+  }, []);
+
   return (
     <div
       className={`command-bar${visible ? " is-visible" : ""}`}
       aria-label="Command entry"
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) {
+          onFocusInput();
+        }
+      }}
     >
       <span className="command-search" aria-hidden="true" />
-      <span className="command-placeholder">コメントを追加 / コマンドを入力</span>
+      <input
+        ref={inputRef}
+        type="text"
+        className="command-input"
+        value={query}
+        onChange={(e) => onQueryChange(e.target.value)}
+        onFocus={onFocusInput}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") {
+            e.preventDefault();
+            e.stopPropagation();
+            onEscape();
+          }
+        }}
+        autoComplete="off"
+        spellCheck={false}
+        placeholder={PLACEHOLDER_HINTS[hintIndex]}
+        aria-label="Command input"
+      />
       <span className="command-kbd">⌘ P</span>
-      <button className="command-submit" type="button" aria-label="Submit command">
-        ↑
-      </button>
-      <div className="command-help" aria-hidden="true">
-        T: TODO <span>|</span> F: FIXME <span>|</span> ⌘ Enter: コメント <span>|</span> Esc: 閉じる
-      </div>
     </div>
   );
 }
