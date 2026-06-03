@@ -276,7 +276,18 @@ function App() {
   }, []);
 
   const scheduleHide = useCallback(() => {
-    hideTimerRef.current = setTimeout(() => setCmdBarHintVisible(false), 320);
+    hideTimerRef.current = setTimeout(() => setCmdBarHintVisible(false), 90);
+  }, []);
+
+  const closeCommandBar = useCallback(() => {
+    if (hideTimerRef.current) {
+      clearTimeout(hideTimerRef.current);
+      hideTimerRef.current = null;
+    }
+    setIsPaletteOpen(false);
+    setCommandQuery("");
+    setCmdBarHintVisible(false);
+    commandInputRef.current?.blur();
   }, []);
 
   useEffect(() => {
@@ -302,8 +313,7 @@ function App() {
         });
       }
       if (e.key === "Escape") {
-        setIsPaletteOpen(false);
-        setCommandQuery("");
+        closeCommandBar();
       }
       // Shift+↑: Jump to previous section
       if (!isTypingTarget && e.shiftKey && e.key === "ArrowUp" && !e.metaKey && !e.ctrlKey && !e.altKey) {
@@ -318,7 +328,7 @@ function App() {
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, []);
+  }, [closeCommandBar]);
 
   useEffect(() => {
     if (!isPaletteOpen) return;
@@ -326,11 +336,11 @@ function App() {
       const target = e.target as Node | null;
       if (!target) return;
       if (commandShellRef.current?.contains(target)) return;
-      setIsPaletteOpen(false);
+      closeCommandBar();
     };
     document.addEventListener("mousedown", handleOutsideClick);
     return () => document.removeEventListener("mousedown", handleOutsideClick);
-  }, [isPaletteOpen]);
+  }, [isPaletteOpen, closeCommandBar]);
 
   const handleChangeTheme = useCallback((newTheme: "dark" | "light") => {
     setTheme(newTheme);
@@ -409,16 +419,14 @@ function App() {
                 setIsPaletteOpen(true);
                 requestAnimationFrame(() => commandInputRef.current?.focus());
               }}
+              onEscape={closeCommandBar}
               inputRef={commandInputRef}
             />
             {isPaletteOpen && (
               <CommandPalette
                 visible={isPaletteOpen}
                 query={commandQuery}
-                onClose={() => {
-                  setIsPaletteOpen(false);
-                  setCommandQuery("");
-                }}
+                onClose={closeCommandBar}
                 onScrollToSection={(beforeSeqId) => viewerRef.current?.scrollToSection(beforeSeqId)}
                 onScrollToSegment={(segId) => viewerRef.current?.scrollToSegment(segId)}
                 onLoadSession={handleLoadSession}
@@ -431,7 +439,7 @@ function App() {
         </header>
 
         <div className="app-main">
-          <NotePanel onScrollToSection={(beforeSeqId) => viewerRef.current?.scrollToSection(beforeSeqId)} />
+          <NotePanel />
           <TranscriptViewer ref={viewerRef} />
         </div>
       </div>
@@ -456,6 +464,7 @@ function CommandBarTrigger({
   query,
   onQueryChange,
   onFocusInput,
+  onEscape,
   inputRef,
 }: {
   visible: boolean;
@@ -464,6 +473,7 @@ function CommandBarTrigger({
   query: string;
   onQueryChange: (value: string) => void;
   onFocusInput: () => void;
+  onEscape: () => void;
   inputRef: RefObject<HTMLInputElement | null>;
 }) {
   const [hintIndex, setHintIndex] = useState(0);
@@ -496,6 +506,13 @@ function CommandBarTrigger({
         value={query}
         onChange={(e) => onQueryChange(e.target.value)}
         onFocus={onFocusInput}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") {
+            e.preventDefault();
+            e.stopPropagation();
+            onEscape();
+          }
+        }}
         autoComplete="off"
         spellCheck={false}
         placeholder={PLACEHOLDER_HINTS[hintIndex]}
