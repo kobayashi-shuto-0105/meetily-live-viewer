@@ -442,13 +442,26 @@ function buildFlowItems<T>(items: T[], focusIndex: number, maxItems: number): Fl
   if (items.length === 0) return [];
 
   const clampedFocus = Math.min(Math.max(focusIndex, 0), items.length - 1);
+  const beforeCount = Math.floor((maxItems - 1) / 2);
+  const afterCount = maxItems - beforeCount - 1;
+  let start = Math.max(0, clampedFocus - beforeCount);
+  let end = Math.min(items.length, clampedFocus + afterCount + 1);
+
+  if (end - start < maxItems) {
+    start = Math.max(0, end - maxItems);
+    end = Math.min(items.length, start + maxItems);
+  }
+
   return items
-    .slice(clampedFocus, clampedFocus + maxItems)
-    .map((item, idx) => ({
-      item,
-      originalIndex: clampedFocus + idx,
-      flowIndex: idx,
-    }));
+    .slice(start, end)
+    .map((item, idx) => {
+      const originalIndex = start + idx;
+      return {
+        item,
+        originalIndex,
+        flowIndex: originalIndex - clampedFocus,
+      };
+    });
 }
 
 function buildAnnotationItems(segments: TranscriptSegmentView[]): AnnotationItem[] {

@@ -3691,42 +3691,23 @@ button:disabled { cursor: default; }
 
 /* --- Follow-up: command palette flow navigation ---------------- */
 .command-palette.command-palette-attached {
-  overflow: hidden;
-  border-color: rgba(235 244 255 / 0.14);
-  border-radius: 18px;
-  background:
-    linear-gradient(135deg, rgba(255 255 255 / 0.14), rgba(255 255 255 / 0.035) 48%, rgba(103 148 255 / 0.045)),
-    rgba(12 20 36 / 0.46);
-  box-shadow:
-    inset 0 1px 0 rgba(255 255 255 / 0.22),
-    inset 0 -1px 0 rgba(255 255 255 / 0.04),
-    0 26px 80px rgba(0 0 0 / 0.34);
-  backdrop-filter: blur(38px) saturate(1.75);
-  -webkit-backdrop-filter: blur(38px) saturate(1.75);
+  overflow: visible;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 .command-section-preview-list::before {
-  content: "";
-  position: absolute;
-  pointer-events: none;
-  z-index: 0;
-  inset: 0 0 auto 0;
-  height: 88px;
-  border: 1px solid rgba(128 181 255 / 0.42);
-  border-radius: 12px;
-  background:
-    linear-gradient(180deg, rgba(118 174 255 / 0.18), rgba(255 255 255 / 0.035)),
-    rgba(25 42 72 / 0.32);
-  box-shadow:
-    inset 0 1px 0 rgba(185 214 255 / 0.30),
-    0 0 0 1px rgba(120 172 255 / 0.12),
-    0 0 34px rgba(85 144 255 / 0.20);
+  display: none;
 }
 
 .command-section-preview-card {
-  position: relative;
+  position: absolute;
+  top: -32px;
+  left: 0;
   z-index: 1;
-  transform: translateY(0);
   transition:
     transform 180ms ease,
     opacity 180ms ease,
@@ -3735,12 +3716,29 @@ button:disabled { cursor: default; }
     background 180ms ease;
 }
 
+.command-section-preview-card[data-flow-index="-2"] {
+  opacity: 0.18;
+  transform: translateY(-192px) scale(0.965);
+  filter: blur(0.2px);
+}
+
+.command-section-preview-card[data-flow-index="-1"] {
+  opacity: 0.54;
+  transform: translateY(-96px) scale(0.985);
+}
+
+.command-section-preview-card[data-flow-index="0"] {
+  transform: translateY(0) scale(1);
+}
+
 .command-section-preview-card[data-flow-index="1"] {
-  opacity: 0.78;
+  opacity: 0.62;
+  transform: translateY(96px) scale(0.985);
 }
 
 .command-section-preview-card[data-flow-index="2"] {
-  opacity: 0.56;
+  opacity: 0.36;
+  transform: translateY(192px) scale(0.965);
 }
 
 .command-section-preview-card[data-flow-index="3"] {
@@ -3766,16 +3764,21 @@ button:disabled { cursor: default; }
 
 .command-section-preview-list {
   position: relative;
-  overflow: hidden;
+  height: 256px;
+  overflow: visible;
   padding: 0;
-  mask-image: linear-gradient(180deg, #000 0%, #000 74%, transparent 100%);
+  mask-image: none;
 }
 
 .command-section-preview-card[data-flow-index="0"] {
   min-height: 88px;
-  border-color: transparent;
-  background: transparent;
-  box-shadow: none;
+  border-color: rgba(120 172 255 / 0.36);
+  background:
+    linear-gradient(180deg, rgba(118 174 255 / 0.16), rgba(255 255 255 / 0.025)),
+    rgba(22 32 52 / 0.20);
+  box-shadow:
+    inset 0 1px 0 rgba(180 210 255 / 0.26),
+    0 18px 40px rgba(0 0 0 / 0.18);
 }
 
 .command-section-preview-card[data-flow-index="0"]::before {
@@ -3796,24 +3799,13 @@ button:disabled { cursor: default; }
 }
 
 [data-theme="light"] .command-palette.command-palette-attached {
-  border-color: rgba(255 255 255 / 0.66);
-  background:
-    linear-gradient(135deg, rgba(255 255 255 / 0.72), rgba(255 255 255 / 0.34) 54%, rgba(130 160 230 / 0.10)),
-    rgba(247 251 255 / 0.50);
-  box-shadow:
-    inset 0 1px 0 rgba(255 255 255 / 0.86),
-    0 22px 70px rgba(58 83 132 / 0.20);
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
 }
 
 [data-theme="light"] .command-section-preview-list::before {
-  border-color: rgba(72 112 205 / 0.28);
-  background:
-    linear-gradient(180deg, rgba(112 148 230 / 0.15), rgba(255 255 255 / 0.38)),
-    rgba(255 255 255 / 0.44);
-  box-shadow:
-    inset 0 1px 0 rgba(255 255 255 / 0.78),
-    0 0 0 1px rgba(70 112 210 / 0.08),
-    0 14px 34px rgba(60 88 140 / 0.12);
+  display: none;
 }
 
 [data-theme="light"] .command-palette-item.is-keyboard-pane .command-palette-item-label,
@@ -3908,9 +3900,43 @@ button:disabled { cursor: default; }
 
 /* --- Follow-up: connected command palette annotation lane ------ */
 .command-palette.command-palette-attached {
-  gap: 0;
+  gap: 16px;
   grid-template-columns: minmax(0, 1fr) minmax(268px, 0.94fr);
   width: min(790px, calc(100vw - 40px));
+  align-items: start;
+}
+
+.command-palette.command-palette-attached .command-palette-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: none;
+  overflow: visible;
+  padding: 0;
+}
+
+.command-palette.command-palette-attached .command-palette-item {
+  margin: 0;
+  border-radius: 12px;
+  background:
+    linear-gradient(180deg, rgba(255 255 255 / 0.08), rgba(255 255 255 / 0.018)),
+    rgba(22 32 52 / 0.12);
+  box-shadow:
+    inset 0 1px 0 rgba(255 255 255 / 0.12),
+    0 12px 28px rgba(0 0 0 / 0.10);
+  backdrop-filter: blur(20px) saturate(1.25);
+  -webkit-backdrop-filter: blur(20px) saturate(1.25);
+}
+
+.command-palette.command-palette-attached .command-palette-item:hover,
+.command-palette.command-palette-attached .command-palette-item.is-focused {
+  background:
+    linear-gradient(180deg, rgba(118 174 255 / 0.16), rgba(255 255 255 / 0.028)),
+    rgba(22 32 52 / 0.16);
+  box-shadow:
+    inset 0 0 0 1px rgba(120 172 255 / 0.22),
+    inset 0 1px 0 rgba(255 255 255 / 0.20),
+    0 16px 34px rgba(60 108 190 / 0.14);
 }
 
 .command-palette-item.is-keyboard-pane {
@@ -3924,12 +3950,14 @@ button:disabled { cursor: default; }
   margin-left: 18px;
   padding: 8px 10px 10px 24px;
   border-left: 0;
+  min-height: 278px;
+  overflow: visible;
 }
 
 .command-section-preview::before {
   content: "";
   position: absolute;
-  top: 36px;
+  top: 27px;
   left: -20px;
   width: 44px;
   height: 1px;
@@ -3939,7 +3967,7 @@ button:disabled { cursor: default; }
 .command-section-preview::after {
   content: "";
   position: absolute;
-  top: 31px;
+  top: 22px;
   left: 18px;
   width: 9px;
   height: 9px;
@@ -3959,7 +3987,9 @@ button:disabled { cursor: default; }
 }
 
 .command-section-preview-card {
-  position: relative;
+  position: absolute;
+  top: -32px;
+  left: 0;
   border-color: rgba(255 255 255 / 0.10);
   border-radius: 10px;
   background:
@@ -3976,7 +4006,7 @@ button:disabled { cursor: default; }
 .command-section-preview-card::before {
   content: "";
   position: absolute;
-  top: 28px;
+  top: 51px;
   left: -25px;
   width: 25px;
   height: 1px;
@@ -4025,6 +4055,26 @@ button:disabled { cursor: default; }
   background:
     linear-gradient(180deg, rgba(112 148 230 / 0.16), rgba(255 255 255 / 0.45)),
     rgba(248 251 255 / 0.50);
+}
+
+[data-theme="light"] .command-palette.command-palette-attached .command-palette-item {
+  background:
+    linear-gradient(180deg, rgba(255 255 255 / 0.64), rgba(255 255 255 / 0.28)),
+    rgba(245 248 255 / 0.22);
+  box-shadow:
+    inset 0 1px 0 rgba(255 255 255 / 0.76),
+    0 12px 28px rgba(60 88 140 / 0.10);
+}
+
+[data-theme="light"] .command-palette.command-palette-attached .command-palette-item:hover,
+[data-theme="light"] .command-palette.command-palette-attached .command-palette-item.is-focused {
+  background:
+    linear-gradient(180deg, rgba(112 148 230 / 0.16), rgba(255 255 255 / 0.46)),
+    rgba(248 251 255 / 0.34);
+  box-shadow:
+    inset 0 0 0 1px rgba(86 122 210 / 0.24),
+    inset 0 1px 0 rgba(255 255 255 / 0.82),
+    0 14px 32px rgba(60 88 140 / 0.13);
 }
 
 @media (max-width: 760px) {
