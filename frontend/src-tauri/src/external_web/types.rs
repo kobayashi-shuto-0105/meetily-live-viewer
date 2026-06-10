@@ -44,6 +44,8 @@ pub enum ExternalWebEvent {
     TranscriptSectionUpdated(TranscriptSectionPayload),
     /// セクションが削除されたことを通知する
     TranscriptSectionDeleted(TranscriptSectionDeletedPayload),
+    /// 共有 NOTES が更新されたことを通知する
+    SessionNotesUpdated(SessionNotesPayload),
 }
 
 // =============================================================================
@@ -203,4 +205,21 @@ pub struct TranscriptSectionDeletedPayload {
     pub id: String,
     /// 所属する録音セッション ID
     pub session_id: String,
+}
+
+/// 共有 NOTES 更新イベントのペイロード。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionNotesPayload {
+    /// 所属する録音セッション ID
+    pub session_id: String,
+    /// 保存完了後に確定する meetings.id（録音中は None）
+    pub meeting_id: Option<String>,
+    /// NOTES 本文
+    pub content: String,
+    /// BlockNote JSON document (when available)
+    pub content_json: Option<String>,
+    /// 最終更新者名
+    pub updated_by: Option<String>,
+    /// 更新日時（ISO8601 形式）
+    pub updated_at: String,
 }

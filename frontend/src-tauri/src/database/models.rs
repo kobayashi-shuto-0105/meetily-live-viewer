@@ -127,6 +127,28 @@ pub struct ExternalTranscriptSection {
     pub updated_at: String,
 }
 
+/// Collaborative NOTES document for one External Web UI session.
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+pub struct ExternalSessionNote {
+    pub session_id: String,
+    pub meeting_id: Option<String>,
+    pub content: String,
+    pub content_json: Option<String>,
+    pub updated_by: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+pub struct ExternalWebSettings {
+    pub id: String,
+    pub notes_ai_enabled: i64,
+    pub ollama_endpoint: String,
+    pub ollama_model: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
 /// セグメント上の文字範囲ハイライト（マーカー）モデル。
 /// `anchor_start` / `anchor_end` が None ならセグメント全体ハイライト。
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]

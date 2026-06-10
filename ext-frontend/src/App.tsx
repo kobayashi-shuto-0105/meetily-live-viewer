@@ -67,8 +67,30 @@ function createDevMockSegments(): TranscriptSegmentResponse[] {
         {
           id: "mock-comment-1",
           external_segment_id: "mock-segment-2",
-          comment_text: "この部分は少し意図を補足した方が伝わりやすいかも。",
+          comment_text: "Add a little more context here before sharing the recap.",
           author_name: "Sarah J.",
+          anchor_start: null,
+          anchor_end: null,
+          anchor_revision_id: null,
+          created_at: new Date().toISOString(),
+        },
+        {
+          id: "mock-comment-2",
+          external_segment_id: "mock-segment-2",
+          comment_text: "Confirm whether this line should be kept in the final notes.",
+          author_name: "Alex K.",
+          anchor_start: null,
+          anchor_end: null,
+          anchor_revision_id: null,
+          created_at: new Date().toISOString(),
+        },
+      ],
+      highlights: [
+        {
+          id: "mock-highlight-2",
+          external_segment_id: "mock-segment-2",
+          color: "fixme",
+          note: "Needs rewrite",
           anchor_start: null,
           anchor_end: null,
           anchor_revision_id: null,
@@ -129,9 +151,11 @@ function App() {
     restoreSession,
     loadSegments,
     loadSections,
+    loadNotes,
     setSelectedSegmentId,
     applySectionFromServer,
     removeSectionFromServer,
+    applyNotesFromServer,
     session,
   } = useTranscriptStore();
 
@@ -145,6 +169,32 @@ function App() {
     function loadDevMockSession() {
       restoreSession(mockSessionId, null, new Date().toISOString());
       loadSegments(createDevMockSegments());
+      loadSections([
+        {
+          id: "mock-section-1",
+          title: "Opening context",
+          description: "Clarify the decision we want to capture before the action items.",
+          beforeSequenceId: 1,
+          createdAt: new Date().toISOString(),
+        },
+        {
+          id: "mock-section-2",
+          title: "Summary decision",
+          description: "Keep the stronger phrasing for the final meeting summary.",
+          beforeSequenceId: 3,
+          createdAt: new Date().toISOString(),
+        },
+      ]);
+      loadNotes({
+        session_id: mockSessionId,
+        meeting_id: null,
+        content:
+          "Meeting overview\n\nA focused discussion on summary quality, transcript cleanup, and follow-up ownership.\n\nKey takeaways\n- Keep transcript sections centered while notes stay in the left glass panel.\n- Comment and highlight details are reviewed from focused sections.\n- The shared notes area should remain editable during the session.\n\nAction items\n[ ] Tighten wording for the recap\n[ ] Confirm which comments should become summary notes",
+        content_json: null,
+        updated_by: "Preview",
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
       setSelectedSegmentId("mock-segment-2");
     }
 
@@ -177,6 +227,11 @@ function App() {
           console.log("[initialLoad] Loaded sections:", sections.length);
         } catch (e) {
           console.warn("[initialLoad] Failed to load sections:", e);
+        }
+        try {
+          loadNotes(await apiClient.getSessionNotes(current.session_id));
+        } catch (e) {
+          console.warn("[initialLoad] Failed to load notes:", e);
         }
       } catch (e) {
         // Log so the error is visible in DevTools — not a fatal failure
@@ -244,6 +299,9 @@ function App() {
           case "TranscriptSectionDeleted":
             removeSectionFromServer(event.payload.id);
             break;
+          case "SessionNotesUpdated":
+            applyNotesFromServer(event.payload);
+            break;
         }
       },
       onStatusChange: setConnectionStatus,
@@ -299,7 +357,7 @@ function App() {
           target.tagName === "TEXTAREA" ||
           target.isContentEditable);
 
-      if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === "p") {
+      if (e.metaKey && !e.ctrlKey && !e.altKey && e.key.toLowerCase() === "p") {
         e.preventDefault();
         if (hideTimerRef.current) {
           clearTimeout(hideTimerRef.current);
@@ -368,11 +426,16 @@ function App() {
         } catch (e) {
           console.warn("[handleLoadSession] Failed to load sections:", e);
         }
+        try {
+          loadNotes(await apiClient.getSessionNotes(sessionId));
+        } catch (e) {
+          console.warn("[handleLoadSession] Failed to load notes:", e);
+        }
       } catch (e) {
         console.warn("[handleLoadSession] Failed to load session:", e);
       }
     },
-    [restoreSession, loadSegments, loadSections]
+    [restoreSession, loadSegments, loadSections, loadNotes]
   );
 
   return (
@@ -493,9 +556,8 @@ function CommandBarTrigger({
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
       onMouseDown={(e) => {
-        if (e.target === e.currentTarget) {
-          onFocusInput();
-        }
+        e.preventDefault();
+        onFocusInput();
       }}
     >
       <span className="command-search" aria-hidden="true" />
@@ -515,6 +577,7 @@ function CommandBarTrigger({
         }}
         autoComplete="off"
         spellCheck={false}
+        tabIndex={visible ? 0 : -1}
         placeholder={PLACEHOLDER_HINTS[hintIndex]}
         aria-label="Command input"
       />

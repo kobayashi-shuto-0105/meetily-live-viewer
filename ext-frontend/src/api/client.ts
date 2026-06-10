@@ -29,6 +29,11 @@ import type {
   UpdateSectionRequest,
   SectionResponse,
   SessionHistoryResponse,
+  SessionNotesResponse,
+  UpdateSessionNotesRequest,
+  ExternalWebSettingsResponse,
+  NotesAiRequest,
+  NotesAiResponse,
 } from "../types";
 import { getRuntimeAccessToken } from "./runtime";
 
@@ -350,6 +355,40 @@ export class ApiClient {
         `/api/sections/${sectionId}`
       );
     }
+  }
+
+  // -------------------------------------------------------------------------
+  // 共有 NOTES 操作
+  // -------------------------------------------------------------------------
+
+  async getSessionNotes(sessionId: string): Promise<SessionNotesResponse> {
+    return this.request<SessionNotesResponse>(
+      `/api/sessions/${encodeURIComponent(sessionId)}/notes`
+    );
+  }
+
+  async updateSessionNotes(
+    sessionId: string,
+    body: UpdateSessionNotesRequest
+  ): Promise<SessionNotesResponse> {
+    return this.request<SessionNotesResponse>(
+      `/api/sessions/${encodeURIComponent(sessionId)}/notes`,
+      {
+        method: "PUT",
+        body: JSON.stringify(body),
+      }
+    );
+  }
+
+  async getExternalWebSettings(): Promise<ExternalWebSettingsResponse> {
+    return this.request<ExternalWebSettingsResponse>("/api/settings/external-web");
+  }
+
+  async generateNotesAi(body: NotesAiRequest): Promise<NotesAiResponse> {
+    return this.request<NotesAiResponse>("/api/notes/ai", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
   }
 }
 

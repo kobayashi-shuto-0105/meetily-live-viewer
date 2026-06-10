@@ -7,6 +7,8 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { toast } from "sonner";
 import { useConfig } from "@/contexts/ConfigContext";
 import { useRecordingState } from "@/contexts/RecordingStateContext";
+import { useEffect, useState } from "react";
+import { configService, ExternalWebSettingsConfig } from "@/services/configService";
 
 type modalType = "modelSettings" | "deviceSettings" | "languageSettings" | "modelSelector" | "errorAlert" | "chunkDropWarning";
 
@@ -57,6 +59,67 @@ export function SettingsModals({
   } = useConfig();
 
   const { isRecording } = useRecordingState();
+  const [externalWebSettings, setExternalWebSettings] = useState<ExternalWebSettingsConfig>({
+    notesAiEnabled: false,
+    ollamaEndpoint: "http://127.0.0.1:11434",
+    ollamaModel: "llama3.2:latest",
+  });
+  const [externalWebSettingsLoading, setExternalWebSettingsLoading] = useState(false);
+  const [externalWebSettingsSaving, setExternalWebSettingsSaving] = useState(false);
+  const [externalWebSettingsTesting, setExternalWebSettingsTesting] = useState(false);
+
+  useEffect(() => {
+    if (!modals.modelSettings) return;
+
+    let cancelled = false;
+    setExternalWebSettingsLoading(true);
+    configService
+      .getExternalWebSettings()
+      .then((settings) => {
+        if (!cancelled) setExternalWebSettings(settings);
+      })
+      .catch((error) => {
+        console.error("Failed to load External Web UI settings:", error);
+        toast.error("Failed to load External Web UI settings");
+      })
+      .finally(() => {
+        if (!cancelled) setExternalWebSettingsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [modals.modelSettings]);
+
+  const saveExternalWebSettings = async () => {
+    setExternalWebSettingsSaving(true);
+    try {
+      const saved = await configService.saveExternalWebSettings(externalWebSettings);
+      setExternalWebSettings(saved);
+      toast.success("External Web UI settings saved");
+    } catch (error) {
+      console.error("Failed to save External Web UI settings:", error);
+      toast.error(error instanceof Error ? error.message : "Failed to save External Web UI settings");
+    } finally {
+      setExternalWebSettingsSaving(false);
+    }
+  };
+
+  const testExternalWebOllama = async () => {
+    setExternalWebSettingsTesting(true);
+    try {
+      const result = await configService.testExternalWebOllama(
+        externalWebSettings.ollamaEndpoint,
+        externalWebSettings.ollamaModel
+      );
+      toast.success(result.message || "Ollama connection succeeded");
+    } catch (error) {
+      console.error("External Web UI Ollama test failed:", error);
+      toast.error(error instanceof Error ? error.message : "Ollama connection failed");
+    } finally {
+      setExternalWebSettingsTesting(false);
+    }
+  };
 
   return <>
     {/* Legacy Settings Modal */}
@@ -81,6 +144,106 @@ export function SettingsModals({
           <div className="flex-1 overflow-y-auto p-6 space-y-8">
             {/* General Preferences Section */}
             <PreferenceSettings />
+
+            <div className="border-t pt-8">
+              <div className="flex items-start justify-between gap-4 mb-4">
+                <div>
+                  <h4 className="text-lg font-semibold text-gray-900">External Web UI</h4>
+                  <p className="text-sm text-gray-600 mt-1">
+                    Configure rich shared notes and local Ollama-powered AI actions for the browser view.
+                  </p>
+                </div>
+                {externalWebSettingsLoading && (
+                  <span className="text-xs text-gray-500">Loading...</span>
+                )}
+              </div>
+
+              <div className="space-y-4">
+                <label className="flex items-start gap-3 rounded-lg border border-gray-200 bg-gray-50 p-4">
+                  <input
+                    type="checkbox"
+                    className="mt-1 h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    checked={externalWebSettings.notesAiEnabled}
+                    onChange={(event) =>
+                      setExternalWebSettings((prev) => ({
+                        ...prev,
+                        notesAiEnabled: event.target.checked,
+                      }))
+                    }
+                  />
+                  <span>
+                    <span className="block text-sm font-medium text-gray-900">
+                      Enable Notes AI
+                    </span>
+                    <span className="block text-sm text-gray-600">
+                      Allows the External Web UI to call your local Ollama server for note completion and rewriting.
+                    </span>
+                  </span>
+                </label>
+
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Ollama URL
+                    </label>
+                    <input
+                      type="url"
+                      className="w-full px-3 py-2 text-sm bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                      value={externalWebSettings.ollamaEndpoint}
+                      onChange={(event) =>
+                        setExternalWebSettings((prev) => ({
+                          ...prev,
+                          ollamaEndpoint: event.target.value,
+                        }))
+                      }
+                      placeholder="http://127.0.0.1:11434"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Ollama model
+                    </label>
+                    <input
+                      list="external-web-ollama-models"
+                      className="w-full px-3 py-2 text-sm bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                      value={externalWebSettings.ollamaModel}
+                      onChange={(event) =>
+                        setExternalWebSettings((prev) => ({
+                          ...prev,
+                          ollamaModel: event.target.value,
+                        }))
+                      }
+                      placeholder="llama3.2:latest"
+                    />
+                    <datalist id="external-web-ollama-models">
+                      {models.map((model) => (
+                        <option key={model.id} value={model.name} />
+                      ))}
+                    </datalist>
+                  </div>
+                </div>
+
+                <div className="flex justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={testExternalWebOllama}
+                    disabled={externalWebSettingsTesting}
+                    className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-60"
+                  >
+                    {externalWebSettingsTesting ? "Testing..." : "Test Ollama"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={saveExternalWebSettings}
+                    disabled={externalWebSettingsSaving}
+                    className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-60"
+                  >
+                    {externalWebSettingsSaving ? "Saving..." : "Save External Web UI"}
+                  </button>
+                </div>
+              </div>
+            </div>
 
             {/* Divider */}
             <div className="border-t pt-8">
