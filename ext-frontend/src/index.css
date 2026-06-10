@@ -4130,3 +4130,34 @@ button:disabled { cursor: default; }
     display: none;
   }
 }
+
+/* --- Desktop notes lane guard: keep NOTES from overlapping transcript --- */
+@media (min-width: 901px) {
+  .app-main {
+    --notes-left: 24px;
+    --notes-width: clamp(300px, 19.5vw, 316px);
+    --notes-gap: 28px;
+  }
+
+  .note-panel {
+    top: 124px;
+    left: var(--notes-left);
+    width: var(--notes-width);
+    height: calc(100vh - 148px);
+    max-height: calc(100vh - 148px);
+  }
+
+  .note-block-editor :where(.bn-editor) {
+    min-height: calc(100vh - 148px);
+    height: calc(100vh - 148px);
+  }
+
+  .transcript-stage {
+    width: min(
+      calc(100vw - var(--notes-left) - var(--notes-width) - var(--notes-gap) - 220px),
+      1240px
+    );
+    margin-left: calc(var(--notes-left) + var(--notes-width) + var(--notes-gap));
+    margin-right: auto;
+  }
+}
