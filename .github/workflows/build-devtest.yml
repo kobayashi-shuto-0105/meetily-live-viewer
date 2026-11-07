@@ -367,6 +367,9 @@ jobs:
           LLAMA_FEATURES=""
           if [[ "${{ matrix.platform }}" == *"macos"* ]]; then
             LLAMA_FEATURES="--features metal"
+            # The local-model helper does not need llama.cpp's HTTPS client.
+            # Its bundled cpp-httplib does not compile against OpenSSL 4.
+            export CMAKE_DISABLE_FIND_PACKAGE_OpenSSL=TRUE
             echo "Using Metal GPU acceleration for macOS"
           elif [[ "${{ matrix.platform }}" == *"windows"* ]]; then
             LLAMA_FEATURES="--features vulkan"
