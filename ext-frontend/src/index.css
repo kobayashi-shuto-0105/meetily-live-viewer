@@ -3847,6 +3847,11 @@ button:disabled { cursor: default; }
   overflow: hidden;
 }
 
+.note-panel-topline {
+  padding: 14px 16px 0;
+  margin-bottom: 0;
+}
+
 .note-block-editor,
 .note-block-editor :where(.bn-root),
 .note-block-editor :where(.bn-container) {
@@ -4131,33 +4136,32 @@ button:disabled { cursor: default; }
   }
 }
 
-/* --- Desktop notes lane guard: keep NOTES from overlapping transcript --- */
-@media (min-width: 901px) {
-  .app-main {
-    --notes-left: 24px;
-    --notes-width: clamp(300px, 19.5vw, 316px);
-    --notes-gap: 28px;
-  }
-
-  .note-panel {
-    top: 124px;
-    left: var(--notes-left);
-    width: var(--notes-width);
-    height: calc(100vh - 148px);
-    max-height: calc(100vh - 148px);
-  }
-
-  .note-block-editor :where(.bn-editor) {
-    min-height: calc(100vh - 148px);
-    height: calc(100vh - 148px);
-  }
-
+/* Keep the transcript lane and its comment cards beside the floating Notes panel. */
+@media (min-width: 1021px) and (max-width: 1636px) {
   .transcript-stage {
+    --segment-width: min(
+      900px,
+      calc(
+        100vw - var(--notes-left) - var(--notes-width) - var(--notes-gap) -
+          var(--sidecar-width) - 24px
+      )
+    );
     width: min(
-      calc(100vw - var(--notes-left) - var(--notes-width) - var(--notes-gap) - 220px),
-      1240px
+      calc(
+        100vw - var(--notes-left) - var(--notes-width) - var(--notes-gap) -
+          var(--sidecar-width) - 24px
+      ),
+      var(--segment-width)
     );
     margin-left: calc(var(--notes-left) + var(--notes-width) + var(--notes-gap));
+    margin-right: auto;
+  }
+}
+
+@media (min-width: 981px) and (max-width: 1020px) {
+  .transcript-stage {
+    width: min(calc(100vw - var(--sidecar-width) - 48px), var(--segment-width));
+    margin-left: 24px;
     margin-right: auto;
   }
 }

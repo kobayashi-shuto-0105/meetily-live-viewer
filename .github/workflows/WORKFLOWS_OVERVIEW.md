@@ -67,7 +67,7 @@ This document provides a quick overview of all available CI/CD workflows in this
 
 **Use When:**
 - Windows-specific development
-- Testing CUDA/Vulkan GPU acceleration
+- Testing Vulkan GPU acceleration
 - Verifying Windows-specific features
 
 **Outputs:**

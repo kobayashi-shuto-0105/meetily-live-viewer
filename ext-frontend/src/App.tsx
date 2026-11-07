@@ -10,6 +10,7 @@ import { CommandPalette } from "./components/CommandPalette";
 import { NotePanel } from "./components/NotePanel";
 import { OnboardingModal } from "./components/OnboardingModal";
 import { loadAuthorName } from "./stores/authorName";
+import { DEV_MOCK_SESSION_ID, readDevMockNotes } from "./devMockSession";
 import type { TranscriptSegmentResponse } from "./types";
 
 // ----------------------------------------------------------------
@@ -27,11 +28,9 @@ function applyTheme(theme: Theme) {
   localStorage.setItem("meetily-theme", theme);
 }
 
-const mockSessionId = "mock-session-sidecar-layout";
-
 function createDevMockSegments(): TranscriptSegmentResponse[] {
   const base = {
-    session_id: mockSessionId,
+    session_id: DEV_MOCK_SESSION_ID,
     meeting_id: null,
     source: "microphone",
     is_partial: false,
@@ -167,7 +166,7 @@ function App() {
   // Restore existing session + segments on first load
   useEffect(() => {
     function loadDevMockSession() {
-      restoreSession(mockSessionId, null, new Date().toISOString());
+      restoreSession(DEV_MOCK_SESSION_ID, null, new Date().toISOString());
       loadSegments(createDevMockSegments());
       loadSections([
         {
@@ -185,16 +184,18 @@ function App() {
           createdAt: new Date().toISOString(),
         },
       ]);
-      loadNotes({
-        session_id: mockSessionId,
-        meeting_id: null,
-        content:
-          "Meeting overview\n\nA focused discussion on summary quality, transcript cleanup, and follow-up ownership.\n\nKey takeaways\n- Keep transcript sections centered while notes stay in the left glass panel.\n- Comment and highlight details are reviewed from focused sections.\n- The shared notes area should remain editable during the session.\n\nAction items\n[ ] Tighten wording for the recap\n[ ] Confirm which comments should become summary notes",
-        content_json: null,
-        updated_by: "Preview",
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      });
+      loadNotes(
+        readDevMockNotes() ?? {
+          session_id: DEV_MOCK_SESSION_ID,
+          meeting_id: null,
+          content:
+            "Meeting overview\n\nA focused discussion on summary quality, transcript cleanup, and follow-up ownership.\n\nKey takeaways\n- Keep transcript sections centered while notes stay in the left glass panel.\n- Comment and highlight details are reviewed from focused sections.\n- The shared notes area should remain editable during the session.\n\nAction items\n[ ] Tighten wording for the recap\n[ ] Confirm which comments should become summary notes",
+          content_json: null,
+          updated_by: "Preview",
+          created_at: null,
+          updated_at: null,
+        }
+      );
       setSelectedSegmentId("mock-segment-2");
     }
 

@@ -115,7 +115,7 @@ jobs:
       - name: Install frontend dependencies
         run: |
           cd frontend
-          pnpm install
+          pnpm install --frozen-lockfile
 
       - name: Import Apple Developer Certificate
         if: ${{ github.event.inputs.sign-build == 'true' }}
@@ -147,6 +147,10 @@ jobs:
           echo "✓ CoreML acceleration available for Apple Silicon"
 
       - name: Build llama-helper sidecar
+        env:
+          # The helper loads local models and does not use llama.cpp's HTTPS client.
+          # Avoid linking the runner's OpenSSL 4, which this bundled version does not support.
+          CMAKE_DISABLE_FIND_PACKAGE_OpenSSL: "TRUE"
         run: |
           echo "Building llama-helper sidecar with Metal support..."
           cargo build --release -p llama-helper --features metal

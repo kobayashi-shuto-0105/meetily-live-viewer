@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import type { Block, PartialBlock } from "@blocknote/core";
 import { useCreateBlockNote } from "@blocknote/react";
@@ -9,6 +9,13 @@ import "@blocknote/core/fonts/inter.css";
 import { apiClient } from "../api/client";
 import { loadAuthorName } from "../stores/authorName";
 import { useTranscriptStore } from "../stores/transcriptStore";
+import {
+  DEV_MOCK_NOTES_STORAGE_KEY,
+  DEV_MOCK_SESSION_ID,
+  parseDevMockNotes,
+  readDevMockNotes,
+} from "../devMockSession";
+import type { SessionNotesResponse } from "../types";
 
 // ----------------------------------------------------------------
 // NotePanel – Collaborative glass BlockNote editor on the left side.
@@ -16,21 +23,24 @@ import { useTranscriptStore } from "../stores/transcriptStore";
 
 export function NotePanel() {
   const session = useTranscriptStore((s) => s.session);
+  const sessionId = session?.sessionId;
   const notesContent = useTranscriptStore((s) => s.notesContent);
   const notesContentJson = useTranscriptStore((s) => s.notesContentJson);
+  const notesUpdatedBy = useTranscriptStore((s) => s.notesUpdatedBy);
   const notesUpdatedAt = useTranscriptStore((s) => s.notesUpdatedAt);
   const setNotesDocument = useTranscriptStore((s) => s.setNotesDocument);
   const loadNotes = useTranscriptStore((s) => s.loadNotes);
-  const [, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const lastSavedRef = useRef(notesContent);
   const isApplyingRemoteRef = useRef(false);
+  const editorChangeVersionRef = useRef(0);
+  const isDevMockSession = import.meta.env.DEV && sessionId === DEV_MOCK_SESSION_ID;
 
-  const initialContent = useMemo(() => {
-    if (Array.isArray(notesContentJson) && notesContentJson.length > 0) {
-      return notesContentJson as PartialBlock[];
-    }
-    return undefined;
-  }, []);
+  const [initialContent] = useState<PartialBlock[] | undefined>(() =>
+    Array.isArray(notesContentJson) && notesContentJson.length > 0
+      ? (notesContentJson as PartialBlock[])
+      : undefined
+  );
 
   const editor = useCreateBlockNote({
     initialContent,
@@ -44,14 +54,19 @@ export function NotePanel() {
   });
 
   useEffect(() => {
-    lastSavedRef.current = notesContent;
-  }, [session?.sessionId]);
+    lastSavedRef.current = useTranscriptStore.getState().notesContent;
+  }, [sessionId, notesUpdatedAt]);
 
   useEffect(() => {
-    if (!session?.sessionId) return;
+    if (!sessionId) return;
+    if (isDevMockSession) {
+      lastSavedRef.current = useTranscriptStore.getState().notesContent;
+      return;
+    }
+
     let cancelled = false;
     apiClient
-      .getSessionNotes(session.sessionId)
+      .getSessionNotes(sessionId)
       .then((note) => {
         if (!cancelled) {
           loadNotes(note);
@@ -64,18 +79,44 @@ export function NotePanel() {
     return () => {
       cancelled = true;
     };
-  }, [session?.sessionId, loadNotes]);
+  }, [sessionId, isDevMockSession, loadNotes]);
+
+  useEffect(() => {
+    if (!isDevMockSession) return;
+
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key !== DEV_MOCK_NOTES_STORAGE_KEY || !event.newValue) return;
+      const note = parseDevMockNotes(event.newValue);
+      if (!note) return;
+
+      lastSavedRef.current = note.content;
+      loadNotes(note);
+      setSaveState("saved");
+    };
+
+    window.addEventListener("storage", handleStorage);
+    return () => window.removeEventListener("storage", handleStorage);
+  }, [isDevMockSession, loadNotes]);
 
   useEffect(() => {
     let cancelled = false;
 
     async function applyNotes() {
+      editorChangeVersionRef.current += 1;
       isApplyingRemoteRef.current = true;
+      const { notesContent: currentNotesContent, notesContentJson: currentNotesContentJson } =
+        useTranscriptStore.getState();
       try {
-        if (Array.isArray(notesContentJson) && notesContentJson.length > 0) {
-          editor.replaceBlocks(editor.document, notesContentJson as PartialBlock[]);
-        } else if (notesContent.trim()) {
-          const blocks = await editor.tryParseMarkdownToBlocks(notesContent);
+        if (Array.isArray(currentNotesContentJson) && currentNotesContentJson.length > 0) {
+          const incomingBlocks = currentNotesContentJson as PartialBlock[];
+          // A save echo can contain the exact document already in the editor.
+          // Replacing identical blocks resets BlockNote's selection and makes
+          // the first slash command appear to jump to a new paragraph.
+          if (stableSerialize(editor.document) !== stableSerialize(incomingBlocks)) {
+            editor.replaceBlocks(editor.document, incomingBlocks);
+          }
+        } else if (currentNotesContent.trim()) {
+          const blocks = await editor.tryParseMarkdownToBlocks(currentNotesContent);
           if (!cancelled) editor.replaceBlocks(editor.document, blocks);
         } else if (editor.document.length > 1 || blockToText(editor.document[0]) !== "") {
           editor.replaceBlocks(editor.document, [{ type: "paragraph", content: "" }]);
@@ -91,13 +132,16 @@ export function NotePanel() {
     return () => {
       cancelled = true;
     };
-  }, [editor, session?.sessionId, notesUpdatedAt]);
+  }, [editor, sessionId, notesUpdatedAt]);
 
   useEffect(() => {
     const unsubscribe = editor.onChange(async () => {
       if (isApplyingRemoteRef.current) return;
-      const markdown = await editor.blocksToMarkdownLossy(editor.document);
-      setNotesDocument(markdown, editor.document);
+      const changeVersion = ++editorChangeVersionRef.current;
+      const document = editor.document;
+      const markdown = await editor.blocksToMarkdownLossy(document);
+      if (changeVersion !== editorChangeVersionRef.current || isApplyingRemoteRef.current) return;
+      setNotesDocument(markdown, document);
     });
 
     return () => {
@@ -106,30 +150,73 @@ export function NotePanel() {
   }, [editor, setNotesDocument]);
 
   useEffect(() => {
-    if (!session?.sessionId) return;
+    if (!sessionId) return;
+    const currentState = useTranscriptStore.getState();
+    if (currentState.session?.sessionId !== sessionId || currentState.notesContent !== notesContent) {
+      return;
+    }
     if (notesContent === lastSavedRef.current) return;
 
     setSaveState("saving");
+    const content = notesContent;
+    const contentJson = editor.document;
     const timeout = window.setTimeout(() => {
+      if (isDevMockSession) {
+        const existingNote = readDevMockNotes();
+        const now = new Date().toISOString();
+        const note: SessionNotesResponse = {
+          session_id: DEV_MOCK_SESSION_ID,
+          meeting_id: null,
+          content,
+          content_json: contentJson,
+          updated_by: loadAuthorName() ?? "Preview",
+          created_at: existingNote?.created_at ?? now,
+          updated_at: now,
+        };
+
+        try {
+          localStorage.setItem(DEV_MOCK_NOTES_STORAGE_KEY, JSON.stringify(note));
+          lastSavedRef.current = note.content;
+          loadNotes(note);
+          setSaveState("saved");
+        } catch (error) {
+          console.warn("[notes] Failed to save preview notes:", error);
+          setSaveState("error");
+        }
+        return;
+      }
+
       apiClient
-        .updateSessionNotes(session.sessionId, {
-          content: notesContent,
-          contentJson: editor.document,
+        .updateSessionNotes(sessionId, {
+          content,
+          contentJson,
           authorName: loadAuthorName() ?? undefined,
         })
         .then((note) => {
+          if (useTranscriptStore.getState().session?.sessionId !== sessionId) return;
           lastSavedRef.current = note.content;
+          if (useTranscriptStore.getState().notesContent !== content) return;
           loadNotes(note);
           setSaveState("saved");
         })
         .catch((error) => {
+          if (useTranscriptStore.getState().notesContent !== content) return;
           console.warn("[notes] Failed to save shared notes:", error);
           setSaveState("error");
         });
     }, 450);
 
     return () => window.clearTimeout(timeout);
-  }, [session?.sessionId, notesContent, editor, loadNotes]);
+  }, [sessionId, notesContent, editor, isDevMockSession, loadNotes]);
+
+  const statusLabel = (() => {
+    if (saveState === "saving") return "Saving…";
+    if (saveState === "error") return "Not saved";
+    if (saveState === "saved") return "Saved";
+    if (isDevMockSession) return notesUpdatedAt ? "Saved" : "Preview";
+    if (notesUpdatedBy && notesUpdatedAt) return `Updated by ${notesUpdatedBy}`;
+    return sessionId ? "Shared" : "No active meeting";
+  })();
 
   const handleEditorKeyDownCapture = (event: ReactKeyboardEvent<HTMLElement>) => {
     if (event.key === "Tab") {
@@ -150,6 +237,12 @@ export function NotePanel() {
   return (
     <aside className="note-panel" onKeyDownCapture={handleEditorKeyDownCapture}>
       <div className="note-panel-content">
+        <div className="note-panel-topline">
+          <p className="note-panel-title">Notes</p>
+          <span className={`note-sync-state is-${saveState}`} role="status" aria-live="polite">
+            {statusLabel}
+          </span>
+        </div>
         <div className="note-block-editor">
           <BlockNoteView
             editor={editor}
@@ -175,4 +268,21 @@ function blockToText(block?: Block): string {
       return "";
     })
     .join("");
+}
+
+function stableSerialize(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableSerialize(item)).join(",")}]`;
+  }
+
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    const entries = Object.keys(record)
+      .filter((key) => record[key] !== undefined)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stableSerialize(record[key])}`);
+    return `{${entries.join(",")}}`;
+  }
+
+  return JSON.stringify(value) ?? "null";
 }

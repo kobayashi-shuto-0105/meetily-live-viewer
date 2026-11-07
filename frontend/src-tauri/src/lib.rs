@@ -61,6 +61,63 @@ use tokio::sync::RwLock;
 
 static RECORDING_FLAG: AtomicBool = AtomicBool::new(false);
 
+#[cfg(target_os = "windows")]
+static ONNX_RUNTIME_INIT_ERROR: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+pub(crate) fn ensure_onnx_runtime_available() -> anyhow::Result<()> {
+    #[cfg(target_os = "windows")]
+    if let Some(error) = ONNX_RUNTIME_INIT_ERROR.get() {
+        anyhow::bail!("{error}");
+    }
+
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn catch_onnx_runtime_init<F, E>(init: F) -> Result<(), String>
+where
+    F: FnOnce() -> Result<(), E>,
+    E: std::fmt::Display,
+{
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(init)) {
+        Ok(result) => result.map_err(|error| error.to_string()),
+        Err(payload) => {
+            let message = payload
+                .downcast_ref::<&str>()
+                .copied()
+                .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+                .unwrap_or("unknown panic");
+            Err(format!("ONNX Runtime initialization panicked: {message}"))
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn record_onnx_runtime_failure(error: String) {
+    log::error!("{error}");
+    let _ = ONNX_RUNTIME_INIT_ERROR.set(error);
+}
+
+#[cfg(all(test, target_os = "windows"))]
+mod onnx_runtime_tests {
+    use super::catch_onnx_runtime_init;
+
+    #[test]
+    fn catch_onnx_runtime_init_converts_errors_and_panics() {
+        assert!(catch_onnx_runtime_init(|| Ok::<(), &str>(())).is_ok());
+        assert_eq!(
+            catch_onnx_runtime_init(|| Err::<(), _>("initializer error")),
+            Err("initializer error".to_string())
+        );
+
+        let error = catch_onnx_runtime_init(|| -> Result<(), &str> {
+            panic!("synthetic loader panic");
+        })
+        .unwrap_err();
+        assert!(error.contains("synthetic loader panic"));
+    }
+}
+
 // Global language preference storage (default to "auto-translate" for automatic translation to English)
 static LANGUAGE_PREFERENCE: std::sync::LazyLock<StdMutex<String>> =
     std::sync::LazyLock::new(|| StdMutex::new("auto-translate".to_string()));
@@ -387,7 +444,22 @@ pub fn get_language_preference_internal() -> Option<String> {
 pub fn run() {
     log::set_max_level(log::LevelFilter::Info);
 
-    tauri::Builder::default()
+    let mut builder = tauri::Builder::default();
+
+    #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
+    {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
+            log_info!(
+                "Second app instance requested with args: {:?}, cwd: {:?}",
+                args,
+                cwd
+            );
+
+            tray::focus_main_window(app);
+        }));
+    }
+
+    builder
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_dialog::init())
@@ -403,6 +475,35 @@ pub fn run() {
         // WebSocket broadcast チャネルと現在の録音セッション情報を管理する。
         .manage(external_web::state::ExternalWebState::new())
         .setup(|_app| {
+            #[cfg(target_os = "windows")]
+            match _app.path().resolve(
+                "onnxruntime.dll",
+                tauri::path::BaseDirectory::Resource,
+            ) {
+                Ok(runtime_path) => {
+                    match catch_onnx_runtime_init(|| {
+                        ort::init_from(runtime_path.to_string_lossy().into_owned())
+                            .with_telemetry(false)
+                            .commit()
+                            .map(|_| ())
+                    }) {
+                        Ok(()) => log::info!(
+                            "Initialized bundled ONNX Runtime from {}",
+                            runtime_path.display()
+                        ),
+                        Err(error) => record_onnx_runtime_failure(format!(
+                            "Failed to initialize bundled ONNX Runtime from {}: {}",
+                            runtime_path.display(),
+                            error
+                        )),
+                    }
+                }
+                Err(error) => record_onnx_runtime_failure(format!(
+                    "Failed to resolve bundled ONNX Runtime resource: {}",
+                    error
+                )),
+            };
+
             log::info!("Application setup complete");
 
             // Initialize system tray
@@ -484,20 +585,14 @@ pub fn run() {
             })
             .expect("Failed to initialize database");
 
-            // External Web UI サーバーを非同期タスクとして起動する。
-            // initialize_database_on_startup が AppState を必ず manage するため、
-            // state() で直接取得できる。
+            // Start the External Web UI once the database is ready. On a first
+            // launch, onboarding must first choose a fresh or imported database.
             {
+                let app_handle = _app.handle().clone();
                 let ext_state = _app
                     .handle()
                     .state::<external_web::state::ExternalWebState>()
                     .inner()
-                    .clone();
-                let pool = _app
-                    .handle()
-                    .state::<state::AppState>()
-                    .db_manager
-                    .pool()
                     .clone();
                 let web_ui_dir = std::env::var("MEETILY_EXT_UI_DIR")
                     .ok()
@@ -511,6 +606,12 @@ pub fn run() {
                             .map(|resource_dir| resource_dir.join("external-web-ui"))
                     });
                 tauri::async_runtime::spawn(async move {
+                    let pool = loop {
+                        if let Some(app_state) = app_handle.try_state::<state::AppState>() {
+                            break app_state.db_manager.pool().clone();
+                        }
+                        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                    };
                     if let Err(e) = external_web::server::run(ext_state, pool, web_ui_dir).await {
                         log::error!("External Web UI server failed: {}", e);
                     }
@@ -528,6 +629,18 @@ pub fn run() {
             }
 
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() == "main" {
+                    api.prevent_close();
+                    if let Err(e) = window.hide() {
+                        log::error!("Failed to hide main window on close request: {}", e);
+                    } else {
+                        log::info!("Main window hidden to tray on close request");
+                    }
+                }
+            }
         })
         .invoke_handler(tauri::generate_handler![
             start_recording,
@@ -616,10 +729,6 @@ pub fn run() {
             // Reload sync commands (retrieve transcript history and meeting name)
             audio::recording_commands::get_transcript_history,
             audio::recording_commands::get_recording_meeting_name,
-            // Device monitoring commands (AirPods/Bluetooth disconnect/reconnect)
-            audio::recording_commands::poll_audio_device_events,
-            audio::recording_commands::get_reconnection_status,
-            audio::recording_commands::attempt_device_reconnect,
             // Playback device detection (Bluetooth warning)
             audio::recording_commands::get_active_audio_output,
             // Audio recovery commands (for transcript recovery feature)
@@ -670,6 +779,11 @@ pub fn run() {
             summary::commands::api_process_transcript,
             summary::commands::api_get_summary,
             summary::commands::api_save_meeting_summary,
+            summary::commands::api_get_meeting_summary_language,
+            summary::commands::api_save_meeting_summary_language,
+            summary::commands::api_get_meeting_detected_summary_language,
+            summary::commands::api_save_meeting_detected_summary_language,
+            summary::commands::api_detect_transcript_summary_language,
             summary::commands::api_cancel_summary,
             // Template commands
             summary::template_commands::api_list_templates,
@@ -756,28 +870,35 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|_app_handle, event| {
-            if let tauri::RunEvent::Exit = event {
-                log::info!("Application exiting, cleaning up resources...");
-                tauri::async_runtime::block_on(async {
-                    // Clean up database connection and checkpoint WAL
-                    if let Some(app_state) = _app_handle.try_state::<state::AppState>() {
-                        log::info!("Starting database cleanup...");
-                        if let Err(e) = app_state.db_manager.cleanup().await {
-                            log::error!("Failed to cleanup database: {}", e);
+            match event {
+                #[cfg(target_os = "macos")]
+                tauri::RunEvent::Reopen { .. } => {
+                    tray::focus_main_window(_app_handle);
+                }
+                tauri::RunEvent::Exit => {
+                    log::info!("Application exiting, cleaning up resources...");
+                    tauri::async_runtime::block_on(async {
+                        // Clean up database connection and checkpoint WAL
+                        if let Some(app_state) = _app_handle.try_state::<state::AppState>() {
+                            log::info!("Starting database cleanup...");
+                            if let Err(e) = app_state.db_manager.cleanup().await {
+                                log::error!("Failed to cleanup database: {}", e);
+                            } else {
+                                log::info!("Database cleanup completed successfully");
+                            }
                         } else {
-                            log::info!("Database cleanup completed successfully");
+                            log::warn!("AppState not available for database cleanup (likely first launch)");
                         }
-                    } else {
-                        log::warn!("AppState not available for database cleanup (likely first launch)");
-                    }
 
-                    // Clean up sidecar
-                    log::info!("Cleaning up sidecar...");
-                    if let Err(e) = summary::summary_engine::force_shutdown_sidecar().await {
-                        log::error!("Failed to force shutdown sidecar: {}", e);
-                    }
-                });
-                log::info!("Application cleanup complete");
+                        // Clean up sidecar
+                        log::info!("Cleaning up sidecar...");
+                        if let Err(e) = summary::summary_engine::force_shutdown_sidecar().await {
+                            log::error!("Failed to force shutdown sidecar: {}", e);
+                        }
+                    });
+                    log::info!("Application cleanup complete");
+                }
+                _ => {}
             }
         });
 }
