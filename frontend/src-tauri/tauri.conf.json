@@ -7,7 +7,7 @@
         "frontendDist": "../out",
         "devUrl": "http://localhost:3118",
         "beforeDevCommand": "pnpm dev",
-        "beforeBuildCommand": "pnpm build"
+        "beforeBuildCommand": "pnpm run build:all"
     },
     "app": {
         "windows": [
@@ -25,9 +25,10 @@
         "security": {
             "csp": {
                 "default-src": "'self'",
+                "script-src": "'self' 'unsafe-eval' 'unsafe-inline'",
                 "style-src": "'self' 'unsafe-inline'",
                 "img-src": "'self' asset: https://asset.localhost data:",
-                "connect-src": "'self' http://localhost:11434 http://localhost:5167 http://localhost:8178 https://api.ollama.ai"
+                "connect-src": "'self' http://localhost:11434 http://localhost:5167 http://localhost:8178 https://api.ollama.ai ws://localhost:3118"
             },
             "assetProtocol": {
                 "enable": true,
@@ -94,9 +95,10 @@
             "icons/app_icon.icns",
             "icons/app_icon.ico"
         ],
-        "resources": [
-            "templates/*.json"
-        ],
+        "resources": {
+            "templates/*.json": "templates/",
+            "../../ext-frontend/dist/": "external-web-ui/"
+        },
         "externalBin": [
             "binaries/llama-helper",
             "binaries/ffmpeg"

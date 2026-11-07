@@ -28,10 +28,6 @@ macro_rules! perf_trace {
     ($($arg:tt)*) => {};
 }
 
-// Make these macros available to other modules
-pub(crate) use perf_debug;
-pub(crate) use perf_trace;
-
 // Re-export async logging macros for external use (removed due to macro conflicts)
 
 // Declare audio module
@@ -41,6 +37,7 @@ pub mod audio;
 pub mod config;
 pub mod console_utils;
 pub mod database;
+pub mod external_web;
 pub mod notifications;
 pub mod ollama;
 pub mod onboarding;
@@ -474,6 +471,9 @@ pub fn run() {
         )) as NotificationManagerState<tauri::Wry>)
         .manage(audio::init_system_audio_state())
         .manage(summary::summary_engine::ModelManagerState(Arc::new(tokio::sync::Mutex::new(None))))
+        // External Web UI 用の共有ステートを登録する。
+        // WebSocket broadcast チャネルと現在の録音セッション情報を管理する。
+        .manage(external_web::state::ExternalWebState::new())
         .setup(|_app| {
             #[cfg(target_os = "windows")]
             match _app.path().resolve(
@@ -584,6 +584,39 @@ pub fn run() {
                 database::setup::initialize_database_on_startup(&_app.handle()).await
             })
             .expect("Failed to initialize database");
+
+            // Start the External Web UI once the database is ready. On a first
+            // launch, onboarding must first choose a fresh or imported database.
+            {
+                let app_handle = _app.handle().clone();
+                let ext_state = _app
+                    .handle()
+                    .state::<external_web::state::ExternalWebState>()
+                    .inner()
+                    .clone();
+                let web_ui_dir = std::env::var("MEETILY_EXT_UI_DIR")
+                    .ok()
+                    .filter(|value| !value.is_empty())
+                    .map(std::path::PathBuf::from)
+                    .or_else(|| {
+                        _app.handle()
+                            .path()
+                            .resource_dir()
+                            .ok()
+                            .map(|resource_dir| resource_dir.join("external-web-ui"))
+                    });
+                tauri::async_runtime::spawn(async move {
+                    let pool = loop {
+                        if let Some(app_state) = app_handle.try_state::<state::AppState>() {
+                            break app_state.db_manager.pool().clone();
+                        }
+                        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                    };
+                    if let Err(e) = external_web::server::run(ext_state, pool, web_ui_dir).await {
+                        log::error!("External Web UI server failed: {}", e);
+                    }
+                });
+            }
 
             // Initialize bundled templates directory for dynamic template discovery
             log::info!("Initializing bundled templates directory...");
@@ -719,6 +752,9 @@ pub fn run() {
             api::api_update_profile,
             api::api_get_model_config,
             api::api_save_model_config,
+            api::api_get_external_web_settings,
+            api::api_save_external_web_settings,
+            api::api_test_external_web_ollama,
             api::api_get_api_key,
             // api::api_get_auto_generate_setting,
             // api::api_save_auto_generate_setting,

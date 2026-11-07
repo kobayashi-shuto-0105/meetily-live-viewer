@@ -1,0 +1,2183 @@
+// =============================================================================
+// External Web UI HTTP/WebSocket サーバー
+// =============================================================================
+// axum ベースの HTTP/WebSocket サーバーを提供する。
+// Tauri アプリの setup 内で `tokio::spawn` により非同期に起動される。
+//
+// エンドポイント一覧:
+//   GET  /health                         - 疎通確認（認証不要）
+//   WS   /ws                             - リアルタイム WebSocket 購読
+//   GET  /api/sessions/current           - 現在の録音セッション取得
+//   GET  /api/sessions/{id}/transcripts  - セッション内セグメント取得
+//   GET  /api/meetings/{id}/transcripts  - 保存済み会議の文字起こし取得
+//   POST /api/segments/{id}/revisions    - 文字起こし修正
+//   POST /api/segments/{id}/comments     - コメント追加
+//   POST /api/segments/{id}/highlights   - ハイライト追加
+//
+// 認証（オプション）:
+//   環境変数 `MEETILY_EXT_TOKEN` が設定されている場合のみ、
+//   クエリパラメータ `?token=xxx` によるトークン認証を有効化する。
+//   未設定の場合は認証なしで全エンドポイントにアクセス可能。
+//
+// バインドアドレス:
+//   デフォルト: 0.0.0.0:38391（LAN 公開 = 外部 PC からアクセス可能）
+//   環境変数 `MEETILY_EXT_BIND` で変更可能（例: "127.0.0.1:38391" でローカルのみ）
+// =============================================================================
+
+use std::collections::HashMap;
+use std::net::SocketAddr;
+use std::path::{Component, Path as FsPath, PathBuf};
+
+use axum::{
+    body::Body,
+    extract::{
+        ws::{Message, WebSocket, WebSocketUpgrade},
+        Path, Query, State,
+    },
+    http::{header, HeaderMap, Method, StatusCode, Uri},
+    middleware::{self, Next},
+    response::{IntoResponse, Response},
+    routing::{delete, get, post},
+    Json, Router,
+};
+use futures_util::{SinkExt, StreamExt};
+use serde::{Deserialize, Serialize};
+use sqlx::SqlitePool;
+use tower_http::cors::CorsLayer;
+
+use crate::database::repositories::external_web::ExternalWebRepository;
+
+use super::state::ExternalWebState;
+use super::types::{
+    ExternalWebEvent, SessionNotesPayload, TranscriptCommentPayload,
+    TranscriptHighlightDeletedPayload, TranscriptHighlightPayload, TranscriptRevisionPayload,
+    TranscriptSectionDeletedPayload, TranscriptSectionPayload,
+};
+
+// =============================================================================
+// サーバー共有ステート
+// =============================================================================
+
+/// axum ルーター全体で共有するステート。
+/// `ExternalWebState`（broadcast チャネル + セッション情報）、認証トークン、
+/// および DB コネクションプールを保持する。
+#[derive(Clone)]
+pub struct ServerState {
+    /// External Web UI の broadcast チャネルとセッション管理
+    pub external_state: ExternalWebState,
+    /// API アクセス用の認証トークン（None の場合は認証スキップ）
+    pub token: Option<String>,
+    /// SQLite コネクションプール（REST API の DB 操作に使用する）
+    pub pool: SqlitePool,
+    /// 同梱された External Web UI の静的ファイルディレクトリ
+    pub web_ui_dir: Option<PathBuf>,
+}
+
+// =============================================================================
+// サーバー起動
+// =============================================================================
+
+/// External Web UI サーバーを起動する。
+/// `lib.rs` の setup 内から `tokio::spawn` で呼び出される。
+///
+/// # 引数
+/// - `external_state`: WebSocket broadcast チャネルと現在のセッション情報
+/// - `pool`: SQLite コネクションプール（REST API の DB 操作に使用する）
+/// - `web_ui_dir`: 同梱された External Web UI の静的ファイルディレクトリ
+///
+/// # エラー
+/// バインドアドレスのパースや TCP リスナーの作成に失敗した場合にエラーを返す。
+pub async fn run(
+    external_state: ExternalWebState,
+    pool: SqlitePool,
+    web_ui_dir: Option<PathBuf>,
+) -> anyhow::Result<()> {
+    // バインドアドレスを環境変数から取得する（デフォルトは全インターフェース = LAN 公開）
+    let bind = std::env::var("MEETILY_EXT_BIND").unwrap_or_else(|_| "0.0.0.0:38391".to_string());
+
+    let addr: SocketAddr = bind.parse()?;
+
+    // 認証トークンを環境変数から取得する（未設定または空の場合は認証なし）
+    let token = std::env::var("MEETILY_EXT_TOKEN")
+        .ok()
+        .filter(|t| !t.is_empty());
+
+    if token.is_some() {
+        log::info!("External Web UI: token auth enabled (MEETILY_EXT_TOKEN is set)");
+    } else {
+        log::warn!(
+            "External Web UI: running without token auth. Set MEETILY_EXT_TOKEN for LAN use."
+        );
+    }
+
+    let state = ServerState {
+        external_state,
+        token,
+        pool,
+        web_ui_dir,
+    };
+
+    if let Some(dir) = &state.web_ui_dir {
+        if dir.join("index.html").is_file() {
+            log::info!("External Web UI assets served from {}", dir.display());
+        } else {
+            log::warn!(
+                "External Web UI assets not found at {} (API/WebSocket will still run)",
+                dir.display()
+            );
+        }
+    } else {
+        log::warn!("External Web UI assets directory is unavailable");
+    }
+
+    // axum ルーターを構築する
+    let router = build_router(state);
+
+    // TCP リスナーを作成してサーバーを起動する
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+    log::info!("External Web UI server listening on {}", addr);
+
+    axum::serve(listener, router).await?;
+
+    Ok(())
+}
+
+// =============================================================================
+// ルーター構築
+// =============================================================================
+
+/// axum ルーターを構築する。
+/// `/health` は認証不要、それ以外のルートはトークン認証ミドルウェアを適用する。
+fn build_router(state: ServerState) -> Router {
+    // 認証が必要なルート群
+    let authenticated_routes = Router::new()
+        // WebSocket エンドポイント: リアルタイムイベントを購読する
+        .route("/ws", get(ws_handler))
+        // 現在の録音セッション情報を取得する
+        .route("/api/sessions/current", get(get_current_session))
+        // セッション履歴を取得する（新しい順、ページネーション対応）
+        .route("/api/sessions/history", get(get_session_history))
+        // セッション内の全セグメントを取得する（リアルタイム中 or 録音後）
+        .route(
+            "/api/sessions/{session_id}/transcripts",
+            get(get_session_transcripts),
+        )
+        // 保存済み会議の文字起こし + overlay を取得する
+        .route(
+            "/api/meetings/{meeting_id}/transcripts",
+            get(get_meeting_transcripts),
+        )
+        // 文字起こし修正（revision）を作成する
+        .route(
+            "/api/segments/{segment_id}/revisions",
+            post(create_revision),
+        )
+        // コメントを追加する
+        .route("/api/segments/{segment_id}/comments", post(create_comment))
+        // ハイライトを追加する
+        .route(
+            "/api/segments/{segment_id}/highlights",
+            post(create_highlight),
+        )
+        // ハイライトを削除する（同種ハイライトの再付与でトグル取り消しに使う）
+        .route(
+            "/api/segments/{segment_id}/highlights/{highlight_id}",
+            delete(delete_highlight),
+        )
+        // セクション取得 / 新規作成（同一パスに GET と POST を束ねる）
+        .route(
+            "/api/sessions/{session_id}/sections",
+            get(get_session_sections).post(create_section),
+        )
+        // セッション共有 NOTES の取得 / 更新
+        .route(
+            "/api/sessions/{session_id}/notes",
+            get(get_session_notes).put(update_session_notes),
+        )
+        // External Web UI settings and local Notes AI
+        .route(
+            "/api/settings/external-web",
+            get(get_external_web_settings).put(update_external_web_settings),
+        )
+        .route("/api/notes/ai", post(generate_notes_ai))
+        // セクション更新 / 削除（同一パスに PUT と DELETE を束ねる）
+        .route(
+            "/api/sections/{section_id}",
+            axum::routing::put(update_section).delete(delete_section),
+        )
+        // トークン認証ミドルウェアを適用する
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            token_auth_middleware,
+        ));
+
+    let router = Router::new()
+        // ヘルスチェックは認証不要（監視ツール等から利用するため）
+        .route("/health", get(health))
+        // 認証が必要なルートをマージする
+        .merge(authenticated_routes)
+        // それ以外の GET/HEAD は同梱した Vite build を返す。
+        // API/WS ルートは上で先にマッチするため影響しない。
+        .fallback(serve_external_web_ui)
+        .with_state(state);
+
+    if env_flag_enabled("MEETILY_EXT_CORS_PERMISSIVE") {
+        router.layer(CorsLayer::permissive())
+    } else {
+        router
+    }
+}
+
+fn env_flag_enabled(name: &str) -> bool {
+    std::env::var(name)
+        .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
+        .unwrap_or(false)
+}
+
+// =============================================================================
+// 静的 UI 配信
+// =============================================================================
+
+/// 同梱された External Web UI を配信する。
+///
+/// Vite の SPA build なので、実ファイルが存在する場合はそのファイルを返し、
+/// 拡張子のないパスは `index.html` にフォールバックする。
+async fn serve_external_web_ui(
+    State(state): State<ServerState>,
+    method: Method,
+    uri: Uri,
+    headers: HeaderMap,
+) -> Response {
+    if method != Method::GET && method != Method::HEAD {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+
+    if uri.path().starts_with("/api/") || uri.path() == "/ws" {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+
+    let Some(web_ui_dir) = state.web_ui_dir.as_ref() else {
+        return (
+            StatusCode::NOT_FOUND,
+            "External Web UI assets are not bundled",
+        )
+            .into_response();
+    };
+
+    let Some(path) = resolve_static_path(web_ui_dir, uri.path()) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+
+    if path.is_file() {
+        return serve_static_file(path, method == Method::HEAD).await;
+    }
+
+    if should_fallback_to_index(uri.path(), &headers) {
+        return serve_static_file(web_ui_dir.join("index.html"), method == Method::HEAD).await;
+    }
+
+    StatusCode::NOT_FOUND.into_response()
+}
+
+fn resolve_static_path(web_ui_dir: &FsPath, request_path: &str) -> Option<PathBuf> {
+    let relative = request_path.trim_start_matches('/');
+
+    if relative.is_empty() {
+        return Some(web_ui_dir.join("index.html"));
+    }
+
+    let path = FsPath::new(relative);
+    if path.components().any(|component| {
+        matches!(
+            component,
+            Component::ParentDir | Component::RootDir | Component::Prefix(_)
+        )
+    }) {
+        return None;
+    }
+
+    Some(web_ui_dir.join(path))
+}
+
+fn should_fallback_to_index(request_path: &str, headers: &HeaderMap) -> bool {
+    if FsPath::new(request_path).extension().is_some() {
+        return false;
+    }
+
+    headers
+        .get(header::ACCEPT)
+        .and_then(|value| value.to_str().ok())
+        .map(|accept| accept.contains("text/html") || accept.contains("*/*"))
+        .unwrap_or(true)
+}
+
+async fn serve_static_file(path: PathBuf, head_only: bool) -> Response {
+    if head_only {
+        return match tokio::fs::metadata(&path).await {
+            Ok(metadata) if metadata.is_file() => static_response_builder(&path, metadata.len())
+                .body(Body::empty())
+                .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response()),
+            _ => StatusCode::NOT_FOUND.into_response(),
+        };
+    }
+
+    match tokio::fs::read(&path).await {
+        Ok(bytes) => {
+            let content_length = bytes.len() as u64;
+            static_response_builder(&path, content_length)
+                .body(Body::from(bytes))
+                .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+        }
+        Err(_) => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+fn static_response_builder(path: &FsPath, content_length: u64) -> axum::http::response::Builder {
+    let mut builder = Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, content_type_for_path(path))
+        .header(header::CONTENT_LENGTH, content_length.to_string());
+
+    if is_cacheable_asset(path) {
+        builder = builder.header(header::CACHE_CONTROL, "public, max-age=31536000, immutable");
+    } else {
+        builder = builder.header(header::CACHE_CONTROL, "no-cache");
+    }
+
+    builder
+}
+
+fn is_cacheable_asset(path: &FsPath) -> bool {
+    path.components()
+        .any(|component| component.as_os_str() == "assets")
+}
+
+fn content_type_for_path(path: &FsPath) -> &'static str {
+    match path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .unwrap_or("")
+    {
+        "html" => "text/html; charset=utf-8",
+        "js" | "mjs" => "text/javascript; charset=utf-8",
+        "css" => "text/css; charset=utf-8",
+        "json" => "application/json; charset=utf-8",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "svg" => "image/svg+xml",
+        "ico" => "image/x-icon",
+        "webp" => "image/webp",
+        "wasm" => "application/wasm",
+        "txt" => "text/plain; charset=utf-8",
+        _ => "application/octet-stream",
+    }
+}
+
+// =============================================================================
+// 認証ミドルウェア
+// =============================================================================
+
+/// オプショナルなトークン認証ミドルウェア。
+/// `ServerState.token` が `Some` の場合のみクエリパラメータ `?token=xxx` を検証する。
+/// `None` の場合は認証をスキップして次のハンドラへ進む。
+async fn token_auth_middleware(
+    State(state): State<ServerState>,
+    Query(params): Query<HashMap<String, String>>,
+    request: axum::http::Request<axum::body::Body>,
+    next: Next,
+) -> Result<impl IntoResponse, StatusCode> {
+    if let Some(expected) = &state.token {
+        let provided = params.get("token").map(|s| s.as_str()).unwrap_or("");
+        if provided != expected {
+            log::warn!("External Web UI: unauthorized access attempt");
+            return Err(StatusCode::UNAUTHORIZED);
+        }
+    }
+    Ok(next.run(request).await)
+}
+
+// =============================================================================
+// ヘルスチェック
+// =============================================================================
+
+/// ヘルスチェックエンドポイント。
+/// 認証不要で、サーバーが稼働中であることを確認するために使う。
+async fn health() -> impl IntoResponse {
+    "ok"
+}
+
+// =============================================================================
+// 現在のセッション取得
+// =============================================================================
+
+/// 現在アクティブな録音セッションの情報を JSON で返す。
+/// 録音中でない場合は `null` を返す。
+async fn get_current_session(State(state): State<ServerState>) -> impl IntoResponse {
+    // RwLock の読み取りロックを取得してセッション情報を取得する
+    let session = state.external_state.current_session.read().await;
+
+    match session.as_ref() {
+        Some(s) => {
+            // セッション情報を JSON にシリアライズして返す
+            let body = serde_json::json!({
+                "session_id": s.id,
+                "meeting_title": s.meeting_title,
+                "started_at": s.started_at,
+            });
+            (StatusCode::OK, axum::Json(body)).into_response()
+        }
+        None => {
+            // 録音中でない場合は null を返す
+            (StatusCode::OK, axum::Json(serde_json::Value::Null)).into_response()
+        }
+    }
+}
+
+// =============================================================================
+// セッション履歴取得
+// =============================================================================
+
+/// セッション履歴を新しい順で返す。
+/// クエリパラメータ `limit`（デフォルト 15）と `offset`（デフォルト 0）でページネーションを制御する。
+async fn get_session_history(
+    State(state): State<ServerState>,
+    Query(params): Query<HashMap<String, String>>,
+) -> impl IntoResponse {
+    let limit = params
+        .get("limit")
+        .and_then(|s| s.parse::<i64>().ok())
+        .unwrap_or(15)
+        .clamp(0, 100);
+    let offset = params
+        .get("offset")
+        .and_then(|s| s.parse::<i64>().ok())
+        .unwrap_or(0)
+        .max(0);
+
+    match ExternalWebRepository::get_session_history(&state.pool, limit, offset).await {
+        Ok(sessions) => {
+            let items: Vec<serde_json::Value> = sessions
+                .iter()
+                .map(|s| {
+                    serde_json::json!({
+                        "session_id": s.id,
+                        "meeting_id": s.meeting_id,
+                        "meeting_title": s.meeting_title,
+                        "started_at": s.started_at,
+                        "stopped_at": s.stopped_at,
+                        "finalized_at": s.finalized_at,
+                    })
+                })
+                .collect();
+
+            (
+                StatusCode::OK,
+                axum::Json(serde_json::json!({
+                    "sessions": items,
+                    "limit": limit,
+                    "offset": offset,
+                })),
+            )
+                .into_response()
+        }
+        Err(e) => {
+            log::error!("Failed to get session history: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                axum::Json(serde_json::json!({
+                    "error": "Failed to get session history"
+                })),
+            )
+                .into_response()
+        }
+    }
+}
+
+// =============================================================================
+// セッション内セグメント取得
+// =============================================================================
+
+/// 指定セッション ID に属する全セグメントを取得する（プラン §12.1）。
+/// リアルタイム録音中でも録音後でも使用可能。
+/// 各セグメントには active revision の有無に応じた `display_text` を含む。
+async fn get_session_transcripts(
+    State(state): State<ServerState>,
+    Path(session_id): Path<String>,
+) -> impl IntoResponse {
+    // DB からセッションに属する全セグメントを sequence_id 昇順で取得する
+    match ExternalWebRepository::get_segments_by_session(&state.pool, &session_id).await {
+        Ok(segments) => {
+            // 各セグメントに display_text（= active revision or raw_text）を付与して返す
+            let mut views = Vec::with_capacity(segments.len());
+            for seg in &segments {
+                let display_text = resolve_display_text(&state.pool, &seg.id, &seg.raw_text).await;
+                // コメントとハイライトも合わせて返す
+                let comments = ExternalWebRepository::get_comments_by_segment(&state.pool, &seg.id)
+                    .await
+                    .unwrap_or_else(|e| {
+                        log::warn!(
+                            "Failed to load comments for segment {} (returning empty): {}",
+                            seg.id,
+                            e
+                        );
+                        vec![]
+                    });
+                let highlights =
+                    ExternalWebRepository::get_highlights_by_segment(&state.pool, &seg.id)
+                        .await
+                        .unwrap_or_else(|e| {
+                            log::warn!(
+                                "Failed to load highlights for segment {} (returning empty): {}",
+                                seg.id,
+                                e
+                            );
+                            vec![]
+                        });
+
+                views.push(serde_json::json!({
+                    "id": seg.id,
+                    "session_id": seg.session_id,
+                    "meeting_id": seg.meeting_id,
+                    "sequence_id": seg.sequence_id,
+                    "raw_text": seg.raw_text,
+                    "display_text": display_text,
+                    "timestamp": seg.timestamp,
+                    "source": seg.source,
+                    "is_partial": seg.is_partial,
+                    "confidence": seg.confidence,
+                    "audio_start_time": seg.audio_start_time,
+                    "audio_end_time": seg.audio_end_time,
+                    "duration": seg.duration,
+                    "comments": comments,
+                    "highlights": highlights,
+                }));
+            }
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({
+                    "session_id": session_id,
+                    "segments": views,
+                    "sections": ExternalWebRepository::get_sections_by_session(&state.pool, &session_id)
+                        .await
+                        .unwrap_or_else(|e| {
+                            log::warn!(
+                                "Failed to load sections for session {} (returning empty): {}",
+                                session_id,
+                                e
+                            );
+                            vec![]
+                        }),
+                })),
+            )
+                .into_response()
+        }
+        Err(e) => {
+            log::error!(
+                "External Web UI: failed to get session transcripts (session_id={}): {}",
+                session_id,
+                e
+            );
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": "Failed to get session transcripts"
+                })),
+            )
+                .into_response()
+        }
+    }
+}
+
+// =============================================================================
+// 保存済み会議の文字起こし取得
+// =============================================================================
+
+/// 保存済み会議に紐づく全セグメントを取得する（プラン §12.1）。
+/// `finalize_session` 完了後に使用する。
+/// 各セグメントには display_text / comments / highlights を含む。
+async fn get_meeting_transcripts(
+    State(state): State<ServerState>,
+    Path(meeting_id): Path<String>,
+) -> impl IntoResponse {
+    // DB から meeting_id に紐づく全セグメントを sequence_id 昇順で取得する
+    match ExternalWebRepository::get_segments_by_meeting(&state.pool, &meeting_id).await {
+        Ok(segments) => {
+            // 各セグメントに display_text + overlay データを付与して返す
+            let mut views = Vec::with_capacity(segments.len());
+            for seg in &segments {
+                let display_text = resolve_display_text(&state.pool, &seg.id, &seg.raw_text).await;
+                let comments = ExternalWebRepository::get_comments_by_segment(&state.pool, &seg.id)
+                    .await
+                    .unwrap_or_else(|e| {
+                        log::warn!(
+                            "Failed to load comments for segment {} (returning empty): {}",
+                            seg.id,
+                            e
+                        );
+                        vec![]
+                    });
+                let highlights =
+                    ExternalWebRepository::get_highlights_by_segment(&state.pool, &seg.id)
+                        .await
+                        .unwrap_or_else(|e| {
+                            log::warn!(
+                                "Failed to load highlights for segment {} (returning empty): {}",
+                                seg.id,
+                                e
+                            );
+                            vec![]
+                        });
+
+                views.push(serde_json::json!({
+                    "id": seg.id,
+                    "session_id": seg.session_id,
+                    "meeting_id": seg.meeting_id,
+                    "sequence_id": seg.sequence_id,
+                    "raw_text": seg.raw_text,
+                    "display_text": display_text,
+                    "timestamp": seg.timestamp,
+                    "source": seg.source,
+                    "is_partial": seg.is_partial,
+                    "confidence": seg.confidence,
+                    "audio_start_time": seg.audio_start_time,
+                    "audio_end_time": seg.audio_end_time,
+                    "duration": seg.duration,
+                    "comments": comments,
+                    "highlights": highlights,
+                }));
+            }
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({
+                    "meeting_id": meeting_id,
+                    "segments": views,
+                })),
+            )
+                .into_response()
+        }
+        Err(e) => {
+            log::error!(
+                "External Web UI: failed to get meeting transcripts (meeting_id={}): {}",
+                meeting_id,
+                e
+            );
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": "Failed to get meeting transcripts"
+                })),
+            )
+                .into_response()
+        }
+    }
+}
+
+// =============================================================================
+// 文字起こし修正（revision）作成
+// =============================================================================
+
+/// 文字起こし修正リクエストのボディ。
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateRevisionRequest {
+    /// 修正後のテキスト
+    edited_text: String,
+    /// 編集者名（任意）
+    editor_name: Option<String>,
+}
+
+/// セグメントに対する revision（編集後テキスト）を作成する（プラン §12.2）。
+/// 既存の active revision は自動的に deactivate される。
+/// 作成後、WebSocket で `TranscriptRevisionCreated` をブロードキャストする。
+async fn create_revision(
+    State(state): State<ServerState>,
+    Path(segment_id): Path<String>,
+    Json(body): Json<CreateRevisionRequest>,
+) -> impl IntoResponse {
+    // repository 層で revision を作成する（トランザクション内で is_active 切替を原子的に実行）
+    match ExternalWebRepository::create_revision(
+        &state.pool,
+        &segment_id,
+        &body.edited_text,
+        body.editor_name.as_deref(),
+    )
+    .await
+    {
+        Ok(revision) => {
+            // WebSocket 全クライアントに revision 作成を通知する
+            state
+                .external_state
+                .publish(ExternalWebEvent::TranscriptRevisionCreated(
+                    TranscriptRevisionPayload {
+                        id: revision.id.clone(),
+                        external_segment_id: revision.external_segment_id.clone(),
+                        edited_text: revision.edited_text.clone(),
+                        version: revision.version,
+                    },
+                ));
+
+            log::info!(
+                "External Web UI: revision created (id={}, segment={})",
+                revision.id,
+                segment_id
+            );
+
+            (
+                StatusCode::CREATED,
+                Json(serde_json::json!({
+                    "id": revision.id,
+                    "external_segment_id": revision.external_segment_id,
+                    "edited_text": revision.edited_text,
+                    "editor_name": revision.editor_name,
+                    "version": revision.version,
+                    "is_active": revision.is_active,
+                    "created_at": revision.created_at,
+                })),
+            )
+                .into_response()
+        }
+        Err(e) => {
+            let status = classify_db_error(&e);
+            log::error!(
+                "External Web UI: failed to create revision (segment_id={}, status={}): {}",
+                segment_id,
+                status,
+                e
+            );
+            (
+                status,
+                Json(serde_json::json!({
+                    "error": "Failed to create revision"
+                })),
+            )
+                .into_response()
+        }
+    }
+}
+
+// =============================================================================
+// コメント追加
+// =============================================================================
+
+/// コメント追加リクエストのボディ。
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateCommentRequest {
+    /// コメント本文
+    comment_text: String,
+    /// 投稿者名（任意）
+    author_name: Option<String>,
+    /// テキスト内のアンカー開始位置（半開区間 [start, end)）。None ならセグメント全体宛て
+    anchor_start: Option<i64>,
+    /// テキスト内のアンカー終了位置
+    anchor_end: Option<i64>,
+    /// anchor の基準となった revision ID（raw_text 基準なら None）
+    anchor_revision_id: Option<String>,
+}
+
+/// セグメントに対するコメントを追加する（プラン §12.3）。
+/// 作成後、WebSocket で `TranscriptCommentCreated` をブロードキャストする。
+async fn create_comment(
+    State(state): State<ServerState>,
+    Path(segment_id): Path<String>,
+    Json(body): Json<CreateCommentRequest>,
+) -> impl IntoResponse {
+    // repository 層でコメントを作成する
+    match ExternalWebRepository::create_comment(
+        &state.pool,
+        &segment_id,
+        &body.comment_text,
+        body.author_name.as_deref(),
+        body.anchor_start,
+        body.anchor_end,
+        body.anchor_revision_id.as_deref(),
+    )
+    .await
+    {
+        Ok(comment) => {
+            // WebSocket 全クライアントにコメント追加を通知する
+            state
+                .external_state
+                .publish(ExternalWebEvent::TranscriptCommentCreated(
+                    TranscriptCommentPayload {
+                        id: comment.id.clone(),
+                        external_segment_id: comment.external_segment_id.clone(),
+                        comment_text: comment.comment_text.clone(),
+                        author_name: comment.author_name.clone(),
+                        anchor_start: comment.anchor_start,
+                        anchor_end: comment.anchor_end,
+                        anchor_revision_id: comment.anchor_revision_id.clone(),
+                    },
+                ));
+
+            log::info!(
+                "External Web UI: comment created (id={}, segment={})",
+                comment.id,
+                segment_id
+            );
+
+            (
+                StatusCode::CREATED,
+                Json(serde_json::json!({
+                    "id": comment.id,
+                    "external_segment_id": comment.external_segment_id,
+                    "comment_text": comment.comment_text,
+                    "author_name": comment.author_name,
+                    "anchor_start": comment.anchor_start,
+                    "anchor_end": comment.anchor_end,
+                    "anchor_revision_id": comment.anchor_revision_id,
+                    "created_at": comment.created_at,
+                })),
+            )
+                .into_response()
+        }
+        Err(e) => {
+            let status = classify_db_error(&e);
+            log::error!(
+                "External Web UI: failed to create comment (segment_id={}, status={}): {}",
+                segment_id,
+                status,
+                e
+            );
+            (
+                status,
+                Json(serde_json::json!({
+                    "error": "Failed to create comment"
+                })),
+            )
+                .into_response()
+        }
+    }
+}
+
+// =============================================================================
+// ハイライト追加
+// =============================================================================
+
+/// ハイライト追加リクエストのボディ。
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateHighlightRequest {
+    /// ハイライト色（UI パレットキー or hex 文字列、例: "yellow", "#ffeb3b"）
+    color: String,
+    /// 任意のメモ（例: "ここ重要"）
+    note: Option<String>,
+    /// テキスト内のアンカー開始位置（半開区間 [start, end)）。None ならセグメント全体
+    anchor_start: Option<i64>,
+    /// テキスト内のアンカー終了位置
+    anchor_end: Option<i64>,
+    /// anchor の基準となった revision ID（raw_text 基準なら None）
+    anchor_revision_id: Option<String>,
+}
+
+/// セグメントに対するハイライトを追加する（プラン §12.4）。
+/// 作成後、WebSocket で `TranscriptHighlightCreated` をブロードキャストする。
+async fn create_highlight(
+    State(state): State<ServerState>,
+    Path(segment_id): Path<String>,
+    Json(body): Json<CreateHighlightRequest>,
+) -> impl IntoResponse {
+    // repository 層でハイライトを作成する
+    match ExternalWebRepository::create_highlight(
+        &state.pool,
+        &segment_id,
+        &body.color,
+        body.note.as_deref(),
+        body.anchor_start,
+        body.anchor_end,
+        body.anchor_revision_id.as_deref(),
+    )
+    .await
+    {
+        Ok(highlight) => {
+            // WebSocket 全クライアントにハイライト追加を通知する
+            state
+                .external_state
+                .publish(ExternalWebEvent::TranscriptHighlightCreated(
+                    TranscriptHighlightPayload {
+                        id: highlight.id.clone(),
+                        external_segment_id: highlight.external_segment_id.clone(),
+                        color: highlight.color.clone(),
+                        note: highlight.note.clone(),
+                        anchor_start: highlight.anchor_start,
+                        anchor_end: highlight.anchor_end,
+                        anchor_revision_id: highlight.anchor_revision_id.clone(),
+                    },
+                ));
+
+            log::info!(
+                "External Web UI: highlight created (id={}, segment={})",
+                highlight.id,
+                segment_id
+            );
+
+            (
+                StatusCode::CREATED,
+                Json(serde_json::json!({
+                    "id": highlight.id,
+                    "external_segment_id": highlight.external_segment_id,
+                    "color": highlight.color,
+                    "note": highlight.note,
+                    "anchor_start": highlight.anchor_start,
+                    "anchor_end": highlight.anchor_end,
+                    "anchor_revision_id": highlight.anchor_revision_id,
+                    "created_at": highlight.created_at,
+                })),
+            )
+                .into_response()
+        }
+        Err(e) => {
+            let status = classify_db_error(&e);
+            log::error!(
+                "External Web UI: failed to create highlight (segment_id={}, status={}): {}",
+                segment_id,
+                status,
+                e
+            );
+            (
+                status,
+                Json(serde_json::json!({
+                    "error": "Failed to create highlight"
+                })),
+            )
+                .into_response()
+        }
+    }
+}
+
+// =============================================================================
+// ハイライト削除
+// =============================================================================
+
+/// セグメントに紐付くハイライトを削除する。
+/// 同種ハイライトの再付与によるトグル取り消し操作で使われる。
+/// 削除後、WebSocket で `TranscriptHighlightDeleted` をブロードキャストする。
+async fn delete_highlight(
+    State(state): State<ServerState>,
+    Path((segment_id, highlight_id)): Path<(String, String)>,
+) -> impl IntoResponse {
+    match ExternalWebRepository::delete_highlight(&state.pool, &highlight_id).await {
+        Ok(_) => {
+            state
+                .external_state
+                .publish(ExternalWebEvent::TranscriptHighlightDeleted(
+                    TranscriptHighlightDeletedPayload {
+                        id: highlight_id.clone(),
+                        external_segment_id: segment_id.clone(),
+                    },
+                ));
+
+            log::info!(
+                "External Web UI: highlight deleted (id={}, segment={})",
+                highlight_id,
+                segment_id
+            );
+
+            StatusCode::NO_CONTENT.into_response()
+        }
+        Err(e) => {
+            let status = classify_db_error(&e);
+            log::error!(
+                "External Web UI: failed to delete highlight (id={}, segment={}, status={}): {}",
+                highlight_id,
+                segment_id,
+                status,
+                e
+            );
+            (
+                status,
+                Json(serde_json::json!({
+                    "error": "Failed to delete highlight"
+                })),
+            )
+                .into_response()
+        }
+    }
+}
+
+// =============================================================================
+// セクション取得
+// =============================================================================
+
+/// 指定セッション内の全セクションを取得する。
+async fn get_session_sections(
+    State(state): State<ServerState>,
+    Path(session_id): Path<String>,
+) -> impl IntoResponse {
+    match ExternalWebRepository::get_sections_by_session(&state.pool, &session_id).await {
+        Ok(sections) => {
+            let views: Vec<_> = sections
+                .iter()
+                .map(|s| {
+                    serde_json::json!({
+                        "id": s.id,
+                        "session_id": s.session_id,
+                        "meeting_id": s.meeting_id,
+                        "title": s.title,
+                        "description": s.description,
+                        "before_sequence_id": s.before_sequence_id,
+                        "created_at": s.created_at,
+                    })
+                })
+                .collect();
+
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({
+                    "session_id": session_id,
+                    "sections": views,
+                })),
+            )
+                .into_response()
+        }
+        Err(e) => {
+            log::error!(
+                "External Web UI: failed to get sections (session_id={}): {}",
+                session_id,
+                e
+            );
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": "Failed to get sections"
+                })),
+            )
+                .into_response()
+        }
+    }
+}
+
+// =============================================================================
+// セクション作成
+// =============================================================================
+
+/// セクション作成リクエストのボディ。
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateSectionRequest {
+    /// セクションタイトル
+    title: String,
+    /// セクションの説明文（任意）
+    description: Option<String>,
+    /// このセクションが挿入される位置（直後のセグメントの sequence_id）
+    before_sequence_id: i64,
+}
+
+/// セッションに対するセクションを作成する。
+/// 作成後、WebSocket で `TranscriptSectionCreated` をブロードキャストする。
+async fn create_section(
+    State(state): State<ServerState>,
+    Path(session_id): Path<String>,
+    Json(body): Json<CreateSectionRequest>,
+) -> impl IntoResponse {
+    match ExternalWebRepository::create_section(
+        &state.pool,
+        &session_id,
+        &body.title,
+        body.description.as_deref().unwrap_or(""),
+        body.before_sequence_id,
+    )
+    .await
+    {
+        Ok(section) => {
+            // WebSocket 全クライアントにセクション作成を通知する
+            state
+                .external_state
+                .publish(ExternalWebEvent::TranscriptSectionCreated(
+                    TranscriptSectionPayload {
+                        id: section.id.clone(),
+                        session_id: section.session_id.clone(),
+                        meeting_id: section.meeting_id.clone(),
+                        title: section.title.clone(),
+                        description: section.description.clone(),
+                        before_sequence_id: section.before_sequence_id,
+                        created_at: section.created_at.clone(),
+                    },
+                ));
+
+            log::info!(
+                "External Web UI: section created (id={}, session={})",
+                section.id,
+                session_id
+            );
+
+            (
+                StatusCode::CREATED,
+                Json(serde_json::json!({
+                    "id": section.id,
+                    "session_id": section.session_id,
+                    "meeting_id": section.meeting_id,
+                    "title": section.title,
+                    "description": section.description,
+                    "before_sequence_id": section.before_sequence_id,
+                    "created_at": section.created_at,
+                })),
+            )
+                .into_response()
+        }
+        Err(e) => {
+            let status = classify_db_error(&e);
+            log::error!(
+                "External Web UI: failed to create section (session_id={}, status={}): {}",
+                session_id,
+                status,
+                e
+            );
+            (
+                status,
+                Json(serde_json::json!({
+                    "error": "Failed to create section"
+                })),
+            )
+                .into_response()
+        }
+    }
+}
+
+// =============================================================================
+// セクション更新
+// =============================================================================
+
+/// セクション更新リクエストのボディ。
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateSectionRequest {
+    /// セクションタイトル
+    title: String,
+    /// セクションの説明文
+    description: Option<String>,
+}
+
+/// セクションのタイトル・説明を更新する。
+/// 更新後、WebSocket で `TranscriptSectionUpdated` をブロードキャストする。
+async fn update_section(
+    State(state): State<ServerState>,
+    Path(section_id): Path<String>,
+    Json(body): Json<UpdateSectionRequest>,
+) -> impl IntoResponse {
+    match ExternalWebRepository::update_section(
+        &state.pool,
+        &section_id,
+        &body.title,
+        body.description.as_deref(),
+    )
+    .await
+    {
+        Ok(section) => {
+            state
+                .external_state
+                .publish(ExternalWebEvent::TranscriptSectionUpdated(
+                    TranscriptSectionPayload {
+                        id: section.id.clone(),
+                        session_id: section.session_id.clone(),
+                        meeting_id: section.meeting_id.clone(),
+                        title: section.title.clone(),
+                        description: section.description.clone(),
+                        before_sequence_id: section.before_sequence_id,
+                        created_at: section.created_at.clone(),
+                    },
+                ));
+
+            log::info!("External Web UI: section updated (id={})", section.id);
+
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({
+                    "id": section.id,
+                    "session_id": section.session_id,
+                    "meeting_id": section.meeting_id,
+                    "title": section.title,
+                    "description": section.description,
+                    "before_sequence_id": section.before_sequence_id,
+                    "created_at": section.created_at,
+                })),
+            )
+                .into_response()
+        }
+        Err(e) => {
+            let status = classify_db_error(&e);
+            log::error!(
+                "External Web UI: failed to update section (id={}, status={}): {}",
+                section_id,
+                status,
+                e
+            );
+            (
+                status,
+                Json(serde_json::json!({
+                    "error": "Failed to update section"
+                })),
+            )
+                .into_response()
+        }
+    }
+}
+
+// =============================================================================
+// セクション削除
+// =============================================================================
+
+/// セクションを削除する。
+/// 削除後、WebSocket で `TranscriptSectionDeleted` をブロードキャストする。
+async fn delete_section(
+    State(state): State<ServerState>,
+    Path(section_id): Path<String>,
+) -> impl IntoResponse {
+    // 削除前にセクション情報を取得（session_id をイベントに含めるため＋存在確認）
+    let section = match ExternalWebRepository::get_section_by_id(&state.pool, &section_id).await {
+        Ok(Some(s)) => s,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({ "error": "Section not found" })),
+            )
+                .into_response();
+        }
+        Err(e) => {
+            log::error!(
+                "External Web UI: failed to look up section before delete (id={}): {}",
+                section_id,
+                e
+            );
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": "Failed to delete section" })),
+            )
+                .into_response();
+        }
+    };
+
+    match ExternalWebRepository::delete_section(&state.pool, &section_id).await {
+        Ok(_) => {
+            state
+                .external_state
+                .publish(ExternalWebEvent::TranscriptSectionDeleted(
+                    TranscriptSectionDeletedPayload {
+                        id: section_id.clone(),
+                        session_id: section.session_id,
+                    },
+                ));
+
+            log::info!("External Web UI: section deleted (id={})", section_id);
+
+            StatusCode::NO_CONTENT.into_response()
+        }
+        Err(e) => {
+            let status = classify_db_error(&e);
+            log::error!(
+                "External Web UI: failed to delete section (id={}, status={}): {}",
+                section_id,
+                status,
+                e
+            );
+            (
+                status,
+                Json(serde_json::json!({
+                    "error": "Failed to delete section"
+                })),
+            )
+                .into_response()
+        }
+    }
+}
+
+// =============================================================================
+// 共有 NOTES 取得 / 更新
+// =============================================================================
+
+/// 指定セッションの共有 NOTES を取得する。
+async fn get_session_notes(
+    State(state): State<ServerState>,
+    Path(session_id): Path<String>,
+) -> impl IntoResponse {
+    match ExternalWebRepository::get_note_by_session(&state.pool, &session_id).await {
+        Ok(Some(note)) => (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "session_id": note.session_id,
+                "meeting_id": note.meeting_id,
+                "content": note.content,
+                "content_json": note.content_json,
+                "updated_by": note.updated_by,
+                "created_at": note.created_at,
+                "updated_at": note.updated_at,
+            })),
+        )
+            .into_response(),
+        Ok(None) => (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "session_id": session_id,
+                "meeting_id": serde_json::Value::Null,
+                "content": "",
+                "content_json": serde_json::Value::Null,
+                "updated_by": serde_json::Value::Null,
+                "created_at": serde_json::Value::Null,
+                "updated_at": serde_json::Value::Null,
+            })),
+        )
+            .into_response(),
+        Err(e) => {
+            log::error!(
+                "External Web UI: failed to get notes (session_id={}): {}",
+                session_id,
+                e
+            );
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": "Failed to get notes" })),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// 共有 NOTES 更新リクエストのボディ。
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateSessionNotesRequest {
+    content: String,
+    content_json: Option<serde_json::Value>,
+    author_name: Option<String>,
+}
+
+/// 指定セッションの共有 NOTES を更新し、全クライアントへ配信する。
+async fn update_session_notes(
+    State(state): State<ServerState>,
+    Path(session_id): Path<String>,
+    Json(body): Json<UpdateSessionNotesRequest>,
+) -> impl IntoResponse {
+    let content_json = body.content_json.as_ref().map(serde_json::Value::to_string);
+    match ExternalWebRepository::upsert_note(
+        &state.pool,
+        &session_id,
+        &body.content,
+        content_json.as_deref(),
+        body.author_name.as_deref(),
+    )
+    .await
+    {
+        Ok(note) => {
+            state
+                .external_state
+                .publish(ExternalWebEvent::SessionNotesUpdated(
+                    SessionNotesPayload {
+                        session_id: note.session_id.clone(),
+                        meeting_id: note.meeting_id.clone(),
+                        content: note.content.clone(),
+                        content_json: note.content_json.clone(),
+                        updated_by: note.updated_by.clone(),
+                        updated_at: note.updated_at.clone(),
+                    },
+                ));
+
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({
+                    "session_id": note.session_id,
+                    "meeting_id": note.meeting_id,
+                    "content": note.content,
+                    "content_json": note.content_json,
+                    "updated_by": note.updated_by,
+                    "created_at": note.created_at,
+                    "updated_at": note.updated_at,
+                })),
+            )
+                .into_response()
+        }
+        Err(e) => {
+            let status = classify_db_error(&e);
+            log::error!(
+                "External Web UI: failed to update notes (session_id={}, status={}): {}",
+                session_id,
+                status,
+                e
+            );
+            (
+                status,
+                Json(serde_json::json!({ "error": "Failed to update notes" })),
+            )
+                .into_response()
+        }
+    }
+}
+
+// =============================================================================
+// External Web UI settings / local Notes AI
+// =============================================================================
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateExternalWebSettingsRequest {
+    notes_ai_enabled: bool,
+    ollama_endpoint: String,
+    ollama_model: String,
+}
+
+async fn get_external_web_settings(State(state): State<ServerState>) -> impl IntoResponse {
+    match ExternalWebRepository::get_external_web_settings(&state.pool).await {
+        Ok(settings) => (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "notes_ai_enabled": settings.notes_ai_enabled != 0,
+                "ollama_endpoint": settings.ollama_endpoint,
+                "ollama_model": settings.ollama_model,
+                "updated_at": settings.updated_at,
+            })),
+        )
+            .into_response(),
+        Err(e) => {
+            log::error!("External Web UI: failed to get settings: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": "Failed to get settings" })),
+            )
+                .into_response()
+        }
+    }
+}
+
+async fn update_external_web_settings(
+    State(state): State<ServerState>,
+    Json(body): Json<UpdateExternalWebSettingsRequest>,
+) -> impl IntoResponse {
+    match validate_ollama_settings(&body.ollama_endpoint, &body.ollama_model) {
+        Ok((endpoint, model)) => {
+            match ExternalWebRepository::save_external_web_settings(
+                &state.pool,
+                body.notes_ai_enabled,
+                &endpoint,
+                &model,
+            )
+            .await
+            {
+                Ok(settings) => (
+                    StatusCode::OK,
+                    Json(serde_json::json!({
+                        "notes_ai_enabled": settings.notes_ai_enabled != 0,
+                        "ollama_endpoint": settings.ollama_endpoint,
+                        "ollama_model": settings.ollama_model,
+                        "updated_at": settings.updated_at,
+                    })),
+                )
+                    .into_response(),
+                Err(e) => {
+                    log::error!("External Web UI: failed to save settings: {}", e);
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(serde_json::json!({ "error": "Failed to save settings" })),
+                    )
+                        .into_response()
+                }
+            }
+        }
+        Err(message) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": message })),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NotesAiRequest {
+    action: NotesAiAction,
+    notes_text: String,
+    selected_text: Option<String>,
+    transcript_context: Option<String>,
+    instruction: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum NotesAiAction {
+    Continue,
+    Improve,
+    SummarizeTranscript,
+    ActionItems,
+}
+
+#[derive(Debug, Serialize)]
+struct OllamaChatRequest {
+    model: String,
+    messages: Vec<OllamaChatMessage>,
+    stream: bool,
+    options: OllamaOptions,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct OllamaChatMessage {
+    role: String,
+    content: String,
+}
+
+#[derive(Debug, Serialize)]
+struct OllamaOptions {
+    temperature: f32,
+    num_predict: i32,
+}
+
+#[derive(Debug, Deserialize)]
+struct OllamaChatResponse {
+    message: Option<OllamaChatMessage>,
+    error: Option<String>,
+}
+
+async fn generate_notes_ai(
+    State(state): State<ServerState>,
+    Json(body): Json<NotesAiRequest>,
+) -> impl IntoResponse {
+    let settings = match ExternalWebRepository::get_external_web_settings(&state.pool).await {
+        Ok(settings) => settings,
+        Err(e) => {
+            log::error!("External Web UI: failed to load AI settings: {}", e);
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": "Failed to load AI settings" })),
+            )
+                .into_response();
+        }
+    };
+
+    if settings.notes_ai_enabled == 0 {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "Notes AI is disabled in Meetily settings" })),
+        )
+            .into_response();
+    }
+
+    let (endpoint, model) = match validate_ollama_settings(&settings.ollama_endpoint, &settings.ollama_model) {
+        Ok(value) => value,
+        Err(message) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": message })),
+            )
+                .into_response();
+        }
+    };
+
+    let prompt = build_notes_ai_prompt(&body);
+    let request = OllamaChatRequest {
+        model,
+        stream: false,
+        options: OllamaOptions {
+            temperature: 0.25,
+            num_predict: 600,
+        },
+        messages: vec![
+            OllamaChatMessage {
+                role: "system".to_string(),
+                content: "You are Meetily Notes AI. Return only concise editor-ready meeting notes. Do not add greetings or markdown fences.".to_string(),
+            },
+            OllamaChatMessage {
+                role: "user".to_string(),
+                content: prompt,
+            },
+        ],
+    };
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(60))
+        .build();
+    let client = match client {
+        Ok(client) => client,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": format!("Failed to create Ollama client: {}", e) })),
+            )
+                .into_response();
+        }
+    };
+
+    let url = format!("{}/api/chat", endpoint.trim_end_matches('/'));
+    let response = match client.post(url).json(&request).send().await {
+        Ok(response) => response,
+        Err(e) => {
+            return (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({ "error": format!("Failed to reach Ollama: {}", e) })),
+            )
+                .into_response();
+        }
+    };
+
+    let status = response.status();
+    let parsed = response.json::<OllamaChatResponse>().await;
+    match parsed {
+        Ok(payload) if status.is_success() => {
+            let text = payload
+                .message
+                .map(|m| m.content)
+                .unwrap_or_default()
+                .trim()
+                .to_string();
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({ "text": text })),
+            )
+                .into_response()
+        }
+        Ok(payload) => (
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({
+                "error": payload.error.unwrap_or_else(|| format!("Ollama returned {}", status))
+            })),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({ "error": format!("Failed to parse Ollama response: {}", e) })),
+        )
+            .into_response(),
+    }
+}
+
+// =============================================================================
+// ヘルパー関数
+// =============================================================================
+
+fn validate_ollama_settings(endpoint: &str, model: &str) -> Result<(String, String), String> {
+    let endpoint = endpoint.trim().trim_end_matches('/').to_string();
+    let model = model.trim().to_string();
+
+    if endpoint.is_empty() {
+        return Err("Ollama URL is required".to_string());
+    }
+    if !endpoint.starts_with("http://") && !endpoint.starts_with("https://") {
+        return Err("Ollama URL must start with http:// or https://".to_string());
+    }
+    if model.is_empty() {
+        return Err("Ollama model is required".to_string());
+    }
+
+    Ok((endpoint, model))
+}
+
+fn build_notes_ai_prompt(body: &NotesAiRequest) -> String {
+    let selected = body
+        .selected_text
+        .as_deref()
+        .unwrap_or("")
+        .trim();
+    let transcript = body
+        .transcript_context
+        .as_deref()
+        .unwrap_or("")
+        .trim();
+    let instruction = body
+        .instruction
+        .as_deref()
+        .unwrap_or("")
+        .trim();
+
+    let task = match body.action {
+        NotesAiAction::Continue => {
+            "Continue the notes from the current context. Add only the next useful bullets or short paragraph."
+        }
+        NotesAiAction::Improve => {
+            "Rewrite the selected notes to be clearer, tighter, and meeting-note ready. Preserve meaning."
+        }
+        NotesAiAction::SummarizeTranscript => {
+            "Summarize the transcript context into concise meeting notes with key takeaways and decisions."
+        }
+        NotesAiAction::ActionItems => {
+            "Extract concrete action items from the transcript and notes. Use unchecked task list style."
+        }
+    };
+
+    format!(
+        "Task:\n{task}\n\nOptional user instruction:\n{instruction}\n\nCurrent notes:\n{notes}\n\nSelected text:\n{selected}\n\nTranscript context:\n{transcript}\n\nReturn only the text to insert into the notes.",
+        notes = body.notes_text.trim()
+    )
+}
+
+/// DB エラーを適切な HTTP ステータスコードに分類するヘルパー。
+/// - FK 制約違反 or 行なし → 404 Not Found（クライアント起因）
+/// - UNIQUE 制約違反 → 409 Conflict（同一位置への重複作成）
+/// - それ以外 → 500 Internal Server Error
+/// Display トレイト経由で sqlx::Error / anyhow::Error 両方を受け取れる。
+fn classify_db_error(e: &dyn std::fmt::Display) -> StatusCode {
+    let msg = e.to_string();
+    if msg.contains("FOREIGN KEY") || msg.contains("no rows returned") {
+        StatusCode::NOT_FOUND
+    } else if msg.contains("UNIQUE constraint failed") {
+        StatusCode::CONFLICT
+    } else {
+        StatusCode::INTERNAL_SERVER_ERROR
+    }
+}
+
+/// セグメントの display_text を決定するヘルパー。
+/// active revision が存在すればその edited_text を、なければ raw_text を返す。
+async fn resolve_display_text(pool: &SqlitePool, segment_id: &str, raw_text: &str) -> String {
+    match ExternalWebRepository::get_active_revision(pool, segment_id).await {
+        Ok(Some(revision)) => revision.edited_text,
+        Ok(None) => raw_text.to_string(),
+        Err(e) => {
+            log::warn!(
+                "Failed to load active revision for segment {} (using raw_text): {}",
+                segment_id,
+                e
+            );
+            raw_text.to_string()
+        }
+    }
+}
+
+// =============================================================================
+// WebSocket ハンドラ
+// =============================================================================
+
+/// WebSocket アップグレードを処理するハンドラ。
+/// HTTP → WebSocket へのプロトコルアップグレードを行い、`handle_ws` に接続を渡す。
+async fn ws_handler(ws: WebSocketUpgrade, State(state): State<ServerState>) -> impl IntoResponse {
+    // WebSocket 接続をアップグレードし、イベント配信ループに渡す
+    ws.on_upgrade(move |socket| handle_ws(socket, state))
+}
+
+/// WebSocket 接続のメインループ。
+/// broadcast チャネルからイベントを受信し、JSON としてクライアントに送信する。
+///
+/// クライアントからのメッセージ（将来の双方向通信用）は別タスクで受信し、
+/// 現時点では破棄する。
+async fn handle_ws(socket: WebSocket, state: ServerState) {
+    log::info!("External Web UI: new WebSocket client connected");
+
+    // WebSocket を送信側と受信側に分割する
+    let (mut sender, mut receiver) = socket.split();
+
+    // broadcast チャネルの受信側を取得する
+    let mut rx = state.external_state.subscribe();
+
+    // クライアントからのメッセージを受信するタスク（現時点では読み捨て）
+    // 将来的に双方向通信（例: cursor 位置の共有）を追加する際に使用する
+    let recv_task = tokio::spawn(async move {
+        while let Some(Ok(_message)) = receiver.next().await {
+            // 現時点ではクライアントからのメッセージは処理しない
+        }
+    });
+
+    // broadcast チャネルからイベントを受信し、WebSocket で送信するループ
+    loop {
+        match rx.recv().await {
+            Ok(event) => {
+                // イベントを JSON にシリアライズする
+                // Arc<ExternalWebEvent> の中身を参照してシリアライズ（プラン §8.4 Arc 最適化）
+                let Ok(json) = serde_json::to_string(event.as_ref()) else {
+                    log::warn!("External Web UI: failed to serialize event");
+                    continue;
+                };
+
+                // WebSocket でクライアントに送信する
+                if sender.send(Message::Text(json.into())).await.is_err() {
+                    // 送信失敗 = クライアントが切断した
+                    log::info!("External Web UI: WebSocket client disconnected");
+                    break;
+                }
+            }
+            Err(tokio::sync::broadcast::error::RecvError::Lagged(count)) => {
+                // クライアントの受信が追いつかず、一部イベントが破棄された
+                log::warn!(
+                    "External Web UI: WebSocket client lagged, {} events dropped",
+                    count
+                );
+                // 接続は維持して続行する（クライアント側でリカバリ可能）
+            }
+            Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                // broadcast チャネルが閉じた（通常はアプリ終了時）
+                log::info!("External Web UI: broadcast channel closed");
+                break;
+            }
+        }
+    }
+
+    // 受信タスクを中断する
+    recv_task.abort();
+}
+
+// =============================================================================
+// テスト
+// =============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::Request;
+    use tower::ServiceExt;
+
+    /// テスト用のインメモリ SQLite プールを作成するヘルパー。
+    /// マイグレーションを適用して全テーブルを利用可能にする。
+    /// max_connections(1) でシングルコネクションにし、全クエリが同一の
+    /// インメモリ DB を参照することを保証する（複数コネクション時は各々が独立した DB を持つ）。
+    async fn test_pool() -> SqlitePool {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("Failed to create in-memory SQLite pool");
+        // マイグレーションを適用してテスト用テーブルを作成する
+        sqlx::migrate!("./migrations")
+            .run(&pool)
+            .await
+            .expect("Failed to run migrations");
+        pool
+    }
+
+    /// テスト用の ServerState（認証なし）
+    async fn test_state() -> ServerState {
+        ServerState {
+            external_state: ExternalWebState::new(),
+            token: None,
+            pool: test_pool().await,
+            web_ui_dir: None,
+        }
+    }
+
+    /// テスト用の ServerState（トークン認証あり）
+    async fn test_state_with_token(token: &str) -> ServerState {
+        ServerState {
+            external_state: ExternalWebState::new(),
+            token: Some(token.to_string()),
+            pool: test_pool().await,
+            web_ui_dir: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_health_endpoint_returns_ok() {
+        let router = build_router(test_state().await);
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/health")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_current_session_without_token_auth() {
+        // トークン未設定時はトークンなしで 200 が返る
+        let router = build_router(test_state().await);
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/api/sessions/current")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_current_session_requires_token_when_configured() {
+        // トークン設定済みの場合、トークンなしで 401 が返る
+        let router = build_router(test_state_with_token("secret").await);
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/api/sessions/current")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_current_session_with_valid_token() {
+        // 正しいトークンでアクセスすると 200 が返る
+        let router = build_router(test_state_with_token("secret").await);
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/api/sessions/current?token=secret")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_current_session_with_invalid_token() {
+        // 不正なトークンでアクセスすると 401 が返る
+        let router = build_router(test_state_with_token("secret").await);
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/api/sessions/current?token=wrong")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_current_session_returns_null_when_no_session() {
+        let router = build_router(test_state().await);
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/api/sessions/current")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(json.is_null());
+    }
+
+    #[tokio::test]
+    async fn test_get_session_transcripts_returns_empty_list() {
+        let router = build_router(test_state().await);
+
+        // 存在しないセッション ID でも空リストを返す（エラーにはしない）
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/api/sessions/nonexistent-session/transcripts")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["segments"].as_array().unwrap().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_get_meeting_transcripts_returns_empty_list() {
+        let router = build_router(test_state().await);
+
+        // 存在しない meeting ID でも空リストを返す
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/api/meetings/nonexistent-meeting/transcripts")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["segments"].as_array().unwrap().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_create_revision_with_valid_segment() {
+        let state = test_state().await;
+        let pool = state.pool.clone();
+
+        // テスト用にセッションとセグメントを作成する
+        let session = ExternalWebRepository::create_session(&pool, Some("Test Meeting"))
+            .await
+            .unwrap();
+        let segment = ExternalWebRepository::upsert_segment(
+            &pool,
+            &session.id,
+            1,
+            "Hello world",
+            "14:30:00",
+            Some("microphone"),
+            false,
+            Some(0.95),
+            Some(0.0),
+            Some(3.0),
+            Some(3.0),
+        )
+        .await
+        .unwrap();
+
+        let router = build_router(state);
+
+        // revision を作成する
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(&format!("/api/segments/{}/revisions", segment.id))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::to_string(&serde_json::json!({
+                            "editedText": "Hello, World!",
+                            "editorName": "tester"
+                        }))
+                        .unwrap(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::CREATED);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["edited_text"], "Hello, World!");
+        assert_eq!(json["editor_name"], "tester");
+        assert_eq!(json["version"], 1);
+    }
+
+    #[tokio::test]
+    async fn test_create_comment_with_valid_segment() {
+        let state = test_state().await;
+        let pool = state.pool.clone();
+
+        // テスト用にセッションとセグメントを作成する
+        let session = ExternalWebRepository::create_session(&pool, Some("Test Meeting"))
+            .await
+            .unwrap();
+        let segment = ExternalWebRepository::upsert_segment(
+            &pool,
+            &session.id,
+            1,
+            "Hello world",
+            "14:30:00",
+            Some("microphone"),
+            false,
+            Some(0.95),
+            Some(0.0),
+            Some(3.0),
+            Some(3.0),
+        )
+        .await
+        .unwrap();
+
+        let router = build_router(state);
+
+        // コメントを作成する
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(&format!("/api/segments/{}/comments", segment.id))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::to_string(&serde_json::json!({
+                            "commentText": "ここは後で確認する",
+                            "authorName": "shuto",
+                            "anchorStart": 0,
+                            "anchorEnd": 5
+                        }))
+                        .unwrap(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::CREATED);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["comment_text"], "ここは後で確認する");
+        assert_eq!(json["author_name"], "shuto");
+    }
+
+    #[tokio::test]
+    async fn test_create_highlight_with_valid_segment() {
+        let state = test_state().await;
+        let pool = state.pool.clone();
+
+        // テスト用にセッションとセグメントを作成する
+        let session = ExternalWebRepository::create_session(&pool, Some("Test Meeting"))
+            .await
+            .unwrap();
+        let segment = ExternalWebRepository::upsert_segment(
+            &pool,
+            &session.id,
+            1,
+            "Hello world",
+            "14:30:00",
+            Some("microphone"),
+            false,
+            Some(0.95),
+            Some(0.0),
+            Some(3.0),
+            Some(3.0),
+        )
+        .await
+        .unwrap();
+
+        let router = build_router(state);
+
+        // ハイライトを作成する
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(&format!("/api/segments/{}/highlights", segment.id))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::to_string(&serde_json::json!({
+                            "color": "yellow",
+                            "note": "重要",
+                            "anchorStart": 0,
+                            "anchorEnd": 11
+                        }))
+                        .unwrap(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::CREATED);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["color"], "yellow");
+        assert_eq!(json["note"], "重要");
+    }
+}

@@ -41,6 +41,12 @@ export interface RecordingPreferences {
   preferred_system_device: string | null;
 }
 
+export interface ExternalWebSettingsConfig {
+  notesAiEnabled: boolean;
+  ollamaEndpoint: string;
+  ollamaModel: string;
+}
+
 /**
  * Configuration Service
  * Singleton service for managing app configuration
@@ -68,6 +74,30 @@ export class ConfigService {
    */
   async getRecordingPreferences(): Promise<RecordingPreferences> {
     return invoke<RecordingPreferences>('get_recording_preferences');
+  }
+
+  async getExternalWebSettings(): Promise<ExternalWebSettingsConfig> {
+    return invoke<ExternalWebSettingsConfig>('api_get_external_web_settings');
+  }
+
+  async saveExternalWebSettings(
+    config: ExternalWebSettingsConfig
+  ): Promise<ExternalWebSettingsConfig> {
+    return invoke<ExternalWebSettingsConfig>('api_save_external_web_settings', {
+      notesAiEnabled: config.notesAiEnabled,
+      ollamaEndpoint: config.ollamaEndpoint,
+      ollamaModel: config.ollamaModel,
+    });
+  }
+
+  async testExternalWebOllama(
+    ollamaEndpoint: string,
+    ollamaModel: string
+  ): Promise<{ status: string; message: string }> {
+    return invoke<{ status: string; message: string }>('api_test_external_web_ollama', {
+      ollamaEndpoint,
+      ollamaModel,
+    });
   }
 
   /**

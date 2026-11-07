@@ -8,7 +8,8 @@ use crate::{
     database::{
         models::MeetingModel,
         repositories::{
-            meeting::MeetingsRepository, setting::SettingsRepository,
+            external_web::ExternalWebRepository, meeting::MeetingsRepository,
+            setting::SettingsRepository,
             transcript::TranscriptsRepository,
         },
     },
@@ -109,6 +110,16 @@ pub struct SaveTranscriptConfigRequest {
     pub model: String,
     #[serde(rename = "apiKey")]
     pub api_key: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ExternalWebSettingsConfig {
+    #[serde(rename = "notesAiEnabled")]
+    pub notes_ai_enabled: bool,
+    #[serde(rename = "ollamaEndpoint")]
+    pub ollama_endpoint: String,
+    #[serde(rename = "ollamaModel")]
+    pub ollama_model: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -571,6 +582,109 @@ pub async fn api_save_model_config<R: Runtime>(
 }
 
 #[tauri::command]
+pub async fn api_get_external_web_settings<R: Runtime>(
+    _app: AppHandle<R>,
+    state: tauri::State<'_, AppState>,
+) -> Result<ExternalWebSettingsConfig, String> {
+    let pool = state.db_manager.pool();
+    let settings = ExternalWebRepository::get_external_web_settings(pool)
+        .await
+        .map_err(|e| format!("Failed to load External Web UI settings: {}", e))?;
+
+    Ok(ExternalWebSettingsConfig {
+        notes_ai_enabled: settings.notes_ai_enabled != 0,
+        ollama_endpoint: settings.ollama_endpoint,
+        ollama_model: settings.ollama_model,
+    })
+}
+
+#[tauri::command]
+pub async fn api_save_external_web_settings<R: Runtime>(
+    _app: AppHandle<R>,
+    state: tauri::State<'_, AppState>,
+    notes_ai_enabled: bool,
+    ollama_endpoint: String,
+    ollama_model: String,
+) -> Result<ExternalWebSettingsConfig, String> {
+    let endpoint = validate_external_ollama_endpoint(&ollama_endpoint)?;
+    let model = ollama_model.trim().to_string();
+    if model.is_empty() {
+        return Err("Ollama model is required".to_string());
+    }
+
+    let pool = state.db_manager.pool();
+    let settings = ExternalWebRepository::save_external_web_settings(
+        pool,
+        notes_ai_enabled,
+        &endpoint,
+        &model,
+    )
+    .await
+    .map_err(|e| format!("Failed to save External Web UI settings: {}", e))?;
+
+    Ok(ExternalWebSettingsConfig {
+        notes_ai_enabled: settings.notes_ai_enabled != 0,
+        ollama_endpoint: settings.ollama_endpoint,
+        ollama_model: settings.ollama_model,
+    })
+}
+
+#[tauri::command]
+pub async fn api_test_external_web_ollama<R: Runtime>(
+    _app: AppHandle<R>,
+    ollama_endpoint: String,
+    ollama_model: String,
+) -> Result<serde_json::Value, String> {
+    let endpoint = validate_external_ollama_endpoint(&ollama_endpoint)?;
+    let model = ollama_model.trim();
+    if model.is_empty() {
+        return Err("Ollama model is required".to_string());
+    }
+
+    let url = format!("{}/api/chat", endpoint.trim_end_matches('/'));
+    let body = serde_json::json!({
+        "model": model,
+        "stream": false,
+        "messages": [{ "role": "user", "content": "Reply with OK." }],
+        "options": { "num_predict": 8, "temperature": 0.0 }
+    });
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(20))
+        .build()
+        .map_err(|e| format!("Failed to create Ollama client: {}", e))?;
+
+    let response = client
+        .post(url)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to reach Ollama: {}", e))?;
+
+    let status = response.status();
+    if status.is_success() {
+        Ok(serde_json::json!({
+            "status": "success",
+            "message": "Ollama connection succeeded"
+        }))
+    } else {
+        let text = response.text().await.unwrap_or_default();
+        Err(format!("Ollama returned {}: {}", status, text))
+    }
+}
+
+fn validate_external_ollama_endpoint(endpoint: &str) -> Result<String, String> {
+    let endpoint = endpoint.trim().trim_end_matches('/').to_string();
+    if endpoint.is_empty() {
+        return Err("Ollama URL is required".to_string());
+    }
+    if !endpoint.starts_with("http://") && !endpoint.starts_with("https://") {
+        return Err("Ollama URL must start with http:// or https://".to_string());
+    }
+    Ok(endpoint)
+}
+
+#[tauri::command]
 pub async fn api_get_api_key<R: Runtime>(
     _app: AppHandle<R>,
     state: tauri::State<'_, AppState>,
@@ -928,7 +1042,7 @@ pub async fn api_save_meeting_title<R: Runtime>(
 
 #[tauri::command]
 pub async fn api_save_transcript<R: Runtime>(
-    _app: AppHandle<R>,
+    app: AppHandle<R>,
     state: tauri::State<'_, AppState>,
     meeting_title: String,
     transcripts: Vec<serde_json::Value>,
@@ -986,6 +1100,63 @@ pub async fn api_save_transcript<R: Runtime>(
                 "Successfully saved transcript and created meeting with id: {}",
                 meeting_id
             );
+
+            // External Web UI: セッションを meeting に紐付ける（§10.3）
+            // 録音中の session_id と保存後の meeting_id を対応させ、
+            // WebSocket クライアントに MeetingPersisted を通知する
+            {
+                use tauri::Manager;
+
+                if let Some(ext_state) =
+                    app.try_state::<crate::external_web::state::ExternalWebState>()
+                {
+                    // 最新の停止済み・未 finalize セッションを探す。
+                    // stop_external_session で stopped_at が設定済みだが、
+                    // meeting_id / finalized_at がまだ NULL のセッションが対象。
+                    let pool_for_ext = state.db_manager.pool();
+                    match sqlx::query_as::<_, crate::database::models::ExternalRecordingSession>(
+                        "SELECT id, meeting_id, meeting_title, started_at, stopped_at, finalized_at, created_at, updated_at
+                         FROM external_recording_sessions
+                         WHERE stopped_at IS NOT NULL
+                           AND meeting_id IS NULL
+                           AND finalized_at IS NULL
+                         ORDER BY stopped_at DESC, created_at DESC
+                         LIMIT 1",
+                    )
+                    .fetch_optional(pool_for_ext)
+                    .await
+                    {
+                        Ok(Some(session)) => {
+                            if let Err(e) =
+                                crate::external_web::service::finalize_external_session(
+                                    pool_for_ext,
+                                    ext_state.inner(),
+                                    &session.id,
+                                    &meeting_id,
+                                )
+                                .await
+                            {
+                                log_error!(
+                                    "Failed to finalize external session: {}",
+                                    e
+                                );
+                            }
+                        }
+                        Ok(None) => {
+                            log_debug!(
+                                "No unfinalized external session found (expected if External Web UI not in use)"
+                            );
+                        }
+                        Err(e) => {
+                            log_debug!(
+                                "Failed to query external sessions: {}",
+                                e
+                            );
+                        }
+                    }
+                }
+            }
+
             Ok(serde_json::json!({
                 "status": "success",
                 "message": "Transcript saved successfully",
